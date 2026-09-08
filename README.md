@@ -60,3 +60,9 @@ The packaged application bundle will be created at `build/Stanza.app`. You can l
 open build/Stanza.app
 ```
 or drag it to your macOS `/Applications` folder.
+
+### Create macOS DMG Installer:
+```bash
+./Scripts/create_dmg.sh
+```
+Creates `build/Stanza-1.0.0.dmg` with a drag-to-Applications installer layout.

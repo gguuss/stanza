@@ -22,6 +22,7 @@ xcuserdata/
 # Build artifacts
 *.dSYM
 *.ipa
+*.dmg
 *.app.dSYM.zip
 
 # Editor & IDE
