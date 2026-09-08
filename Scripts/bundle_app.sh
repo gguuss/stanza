@@ -50,6 +50,10 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <true/>
     <key>NSHumanReadableCopyright</key>
     <string>Copyright © 2026 Stanza. All rights reserved.</string>
+    <key>CFBundleSupportedPlatforms</key>
+    <array>
+        <string>MacOSX</string>
+    </array>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
@@ -71,4 +75,13 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-echo "Stanza.app successfully packaged at: $APP_DIR"
+# Strip extended attributes and seal with ad-hoc code signature
+echo "Signing Stanza.app..."
+xattr -cr "$APP_DIR"
+codesign --force --deep --sign - "$APP_DIR"
+
+# Verify signature integrity
+codesign -vvv --deep --strict "$APP_DIR"
+
+echo "Stanza.app successfully packaged and signed at: $APP_DIR"
+

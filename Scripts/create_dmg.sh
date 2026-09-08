@@ -51,4 +51,9 @@ create-dmg \
 # Clean up staging
 rm -rf "$STAGING_DIR"
 
+# Ad-hoc sign the DMG
+echo "==> Signing DMG..."
+codesign --force --sign - "$OUTPUT_DMG"
+
 echo "==> Successfully created DMG installer at: $OUTPUT_DMG"
+
