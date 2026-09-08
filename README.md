@@ -83,3 +83,10 @@ or drag it to your macOS `/Applications` folder.
 ./Scripts/create_dmg.sh
 ```
 Creates `build/Stanza-1.1.0.dmg` with a drag-to-Applications installer layout.
+
+---
+
+## Roadmap
+
+See [roadmap.md](roadmap.md) for planned features, upcoming releases, and tracked improvements.
+
