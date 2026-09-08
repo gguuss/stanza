@@ -1,0 +1,31 @@
+# Xcode & Swift Package Manager
+.build/
+build/
+DerivedData/
+.swiftpm/
+Package.resolved
+
+# Xcode project files (if generated)
+*.xcodeproj
+*.xcworkspace
+xcuserdata/
+*.xcuserstate
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+
+# Build artifacts
+*.dSYM
+*.ipa
+*.app.dSYM.zip
+
+# Editor & IDE
+.vscode/
+.idea/
+*.swp
+*~
