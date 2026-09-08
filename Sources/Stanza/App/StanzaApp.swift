@@ -1,17 +1,65 @@
 import SwiftUI
 import AppKit
 
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var appState: AppState?
+
+    func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        Task { @MainActor in
+            self.appState?.addURLs(urls, autoPlayFirst: false)
+            if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        sender.reply(toOpenOrPrint: .success)
+    }
+
+    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+        let url = URL(fileURLWithPath: filename)
+        Task { @MainActor in
+            self.appState?.addURLs([url], autoPlayFirst: false)
+            if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        return true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { @MainActor in
+            self.appState?.addURLs(urls, autoPlayFirst: false)
+            if let window = application.windows.first(where: { $0.title == "Stanza" }) ?? application.windows.first {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !flag {
+            for window in sender.windows {
+                window.makeKeyAndOrderFront(nil)
+            }
+        }
+        return true
+    }
+}
+
 @main
 struct StanzaApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appState = AppState()
 
     var body: some Scene {
-        WindowGroup {
+        Window("Stanza", id: "main") {
             MainPlayerView(appState: appState)
                 .preferredColorScheme(.dark)
                 .background(WindowAccessor())
+                .onAppear {
+                    appDelegate.appState = appState
+                }
                 .onOpenURL { url in
-                    appState.openAndPlayURLs([url])
+                    appState.addURLs([url], autoPlayFirst: false)
                 }
         }
         .windowStyle(.titleBar)

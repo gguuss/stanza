@@ -25,10 +25,11 @@ public final class AppState: ObservableObject {
     }
 
     public func addURLs(_ urls: [URL], autoPlayFirst: Bool = false) {
-        guard !urls.isEmpty else { return }
+        let audioURLs = resolveAudioURLs(from: urls)
+        guard !audioURLs.isEmpty else { return }
 
         // Create tracks instantly in 0.1ms
-        let quickTracks = urls.map { AudioTrack.quick(from: $0) }
+        let quickTracks = audioURLs.map { AudioTrack.quick(from: $0) }
         let wasEmpty = self.queue.isEmpty
         self.queue.append(contentsOf: quickTracks)
         self.statusMessage = "Enqueued \(quickTracks.count) audio file(s)"

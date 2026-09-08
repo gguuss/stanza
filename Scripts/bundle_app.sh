@@ -63,6 +63,8 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
     <array>
         <string>MacOSX</string>
     </array>
+    <key>LSMultipleInstancesProhibited</key>
+    <true/>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>
