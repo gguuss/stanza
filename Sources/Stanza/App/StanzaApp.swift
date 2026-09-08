@@ -174,6 +174,26 @@ struct StanzaApp: App {
                 }
                 .keyboardShortcut("3", modifiers: .command)
             }
+
+            // View Menu
+            CommandMenu("View") {
+                Button("Explorer: Columns (Side by Side)") {
+                    appState.leftPaneOrientation = .horizontal
+                }
+                .keyboardShortcut("h", modifiers: [.command, .option])
+
+                Button("Explorer: Stacked (Top / Bottom)") {
+                    appState.leftPaneOrientation = .vertical
+                }
+                .keyboardShortcut("v", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Toggle Left Pane Layout") {
+                    appState.toggleLeftPaneOrientation()
+                }
+                .keyboardShortcut("l", modifiers: [.command, .option])
+            }
         }
     }
 }

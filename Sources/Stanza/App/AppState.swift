@@ -3,6 +3,11 @@ import SwiftUI
 import AppKit
 import AVFoundation
 
+public enum LeftPaneOrientation: String, CaseIterable, Sendable {
+    case horizontal = "Columns"
+    case vertical = "Stacked"
+}
+
 @MainActor
 public final class AppState: ObservableObject {
     // Current folder being explored
@@ -11,6 +16,10 @@ public final class AppState: ObservableObject {
     @Published public var siblingFolders: [FolderItem] = []
     @Published public var childFolders: [FolderItem] = []
     @Published public var quickAccessFolders: [FolderItem] = []
+
+    // Explorer Layout & Tree State
+    @Published public var leftPaneOrientation: LeftPaneOrientation = .horizontal
+    @Published public var expandedFolderURLs: Set<String> = []
 
     // Playable tracks in the current folder
     @Published public var queue: [AudioTrack] = []
@@ -118,6 +127,9 @@ public final class AppState: ObservableObject {
             self.selectedTrackID = first.id
         }
 
+        // Auto-expand tree path to current directory
+        expandAncestors(of: standardURL)
+
         // Background metadata enrichment
         let currentTracks = self.queue
         Task.detached(priority: .utility) {
@@ -130,6 +142,32 @@ public final class AppState: ObservableObject {
                 }
             }
         }
+    }
+
+    public func expandAncestors(of url: URL) {
+        var dir = url.resolvingSymlinksInPath().standardizedFileURL
+        while dir.path != "/" && dir.path != dir.deletingLastPathComponent().resolvingSymlinksInPath().path {
+            expandedFolderURLs.insert(dir.path)
+            dir = dir.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        }
+        expandedFolderURLs.insert(dir.path)
+    }
+
+    public func toggleFolderExpansion(_ url: URL) {
+        let path = url.resolvingSymlinksInPath().standardizedFileURL.path
+        if expandedFolderURLs.contains(path) {
+            expandedFolderURLs.remove(path)
+        } else {
+            expandedFolderURLs.insert(path)
+        }
+    }
+
+    public func isFolderExpanded(_ url: URL) -> Bool {
+        expandedFolderURLs.contains(url.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+
+    public func toggleLeftPaneOrientation() {
+        leftPaneOrientation = (leftPaneOrientation == .horizontal) ? .vertical : .horizontal
     }
 
     public func scanAudioFilesInFolder(_ folderURL: URL) -> [URL] {

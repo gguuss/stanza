@@ -343,5 +343,40 @@ final class StanzaTests: XCTestCase {
 
         engine.stop()
     }
+
+    @MainActor
+    func testTreeExpansionAndLeftPaneOrientation() throws {
+        let rootTempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let artistDir = rootTempDir.appendingPathComponent("Artist")
+        let albumDir = artistDir.appendingPathComponent("Album")
+        try FileManager.default.createDirectory(at: albumDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootTempDir) }
+
+        let songURL = albumDir.appendingPathComponent("song.wav")
+        try "dummy".write(to: songURL, atomically: true, encoding: .utf8)
+
+        let appState = AppState()
+
+        // Test default orientation
+        XCTAssertEqual(appState.leftPaneOrientation, .horizontal)
+        appState.toggleLeftPaneOrientation()
+        XCTAssertEqual(appState.leftPaneOrientation, .vertical)
+        appState.toggleLeftPaneOrientation()
+        XCTAssertEqual(appState.leftPaneOrientation, .horizontal)
+
+        // Navigate to album -> should expand ancestors in tree
+        appState.openAndPlayURLs([songURL])
+
+        XCTAssertTrue(appState.isFolderExpanded(albumDir))
+        XCTAssertTrue(appState.isFolderExpanded(artistDir))
+        XCTAssertTrue(appState.isFolderExpanded(rootTempDir))
+
+        // Toggle manual expansion
+        appState.toggleFolderExpansion(albumDir)
+        XCTAssertFalse(appState.isFolderExpanded(albumDir))
+        appState.toggleFolderExpansion(albumDir)
+        XCTAssertTrue(appState.isFolderExpanded(albumDir))
+    }
 }
+
 
