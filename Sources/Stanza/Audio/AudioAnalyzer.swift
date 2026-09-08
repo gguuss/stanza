@@ -180,7 +180,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
         for i in 0..<bandCount {
             let lTarget = leftBandsScratch[i]
             let rTarget = rightBandsScratch[i]
-            let combinedTarget = (lTarget + rTarget) * 0.5
+            let combinedTarget = max(lTarget, rTarget)
 
             // Combined
             if combinedTarget > smoothedBands[i] {
