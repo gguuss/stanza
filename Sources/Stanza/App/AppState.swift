@@ -5,6 +5,14 @@ import AVFoundation
 
 @MainActor
 public final class AppState: ObservableObject {
+    // Current folder being explored
+    @Published public var currentFolderURL: URL?
+    @Published public var parentFolderURL: URL?
+    @Published public var siblingFolders: [FolderItem] = []
+    @Published public var childFolders: [FolderItem] = []
+    @Published public var quickAccessFolders: [FolderItem] = []
+
+    // Playable tracks in the current folder
     @Published public var queue: [AudioTrack] = []
     @Published public var selectedTrackID: UUID?
     @Published public var visualizerMode: VisualizerMode = .stereoWaveform
@@ -13,10 +21,34 @@ public final class AppState: ObservableObject {
 
     public let audioEngine = AudioEngineController.shared
 
+    public static let supportedAudioExtensions: Set<String> = [
+        "mp3", "wav", "wave", "flac", "m4a", "aac", "aiff", "aif", "caf", "alac", "ogg", "oga", "opus", "mp4", "m4b", "m4r"
+    ]
+
     public init() {
         audioEngine.onTrackCompleted = { [weak self] in
             self?.playNext(userInitiated: false)
         }
+        setupQuickAccess()
+    }
+
+    private func setupQuickAccess() {
+        let fm = FileManager.default
+        var items: [FolderItem] = []
+
+        if let music = fm.urls(for: .musicDirectory, in: .userDomainMask).first {
+            items.append(FolderItem(url: music.standardizedFileURL, name: "Music", kind: .quickAccess))
+        }
+        if let downloads = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first {
+            items.append(FolderItem(url: downloads.standardizedFileURL, name: "Downloads", kind: .quickAccess))
+        }
+        if let desktop = fm.urls(for: .desktopDirectory, in: .userDomainMask).first {
+            items.append(FolderItem(url: desktop.standardizedFileURL, name: "Desktop", kind: .quickAccess))
+        }
+        let home = URL(fileURLWithPath: NSHomeDirectory()).standardizedFileURL
+        items.append(FolderItem(url: home, name: "Home", kind: .quickAccess))
+
+        self.quickAccessFolders = items
     }
 
     public var currentTrackIndex: Int? {
@@ -24,23 +56,72 @@ public final class AppState: ObservableObject {
         return queue.firstIndex(where: { $0.id == current.id })
     }
 
-    public func addURLs(_ urls: [URL], autoPlayFirst: Bool = false) {
-        let audioURLs = resolveAudioURLs(from: urls)
-        guard !audioURLs.isEmpty else { return }
+    public func navigateToFolder(_ folderURL: URL, selectTrackURL: URL? = nil, autoPlay: Bool = false) {
+        let standardURL = folderURL.resolvingSymlinksInPath().standardizedFileURL
+        _ = standardURL.startAccessingSecurityScopedResource()
 
-        // Create tracks instantly in 0.1ms
-        let quickTracks = audioURLs.map { AudioTrack.quick(from: $0) }
-        let wasEmpty = self.queue.isEmpty
-        self.queue.append(contentsOf: quickTracks)
-        self.statusMessage = "Enqueued \(quickTracks.count) audio file(s)"
-
-        if (wasEmpty || autoPlayFirst), let first = quickTracks.first {
-            self.playTrack(first)
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        guard fm.fileExists(atPath: standardURL.path, isDirectory: &isDir), isDir.boolValue else {
+            return
         }
 
-        // Background enrichment for metadata (ID3 tags, title, artist)
+        self.currentFolderURL = standardURL
+
+        // Determine parent folder
+        let parent = standardURL.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
+        if parent.path != standardURL.path {
+            self.parentFolderURL = parent
+            // Scan siblings in parent
+            if let siblingURLs = try? fm.contentsOfDirectory(at: parent, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+                self.siblingFolders = siblingURLs
+                    .map { $0.resolvingSymlinksInPath().standardizedFileURL }
+                    .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+                    .map { FolderItem(url: $0, kind: $0.path == standardURL.path ? .current : .sibling) }
+                    .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+            } else {
+                self.siblingFolders = [FolderItem(url: standardURL, kind: .current)]
+            }
+        } else {
+            self.parentFolderURL = nil
+            self.siblingFolders = [FolderItem(url: standardURL, kind: .current)]
+        }
+
+        // Scan child subfolders inside currentFolder
+        if let childURLs = try? fm.contentsOfDirectory(at: standardURL, includingPropertiesForKeys: [.isDirectoryKey], options: [.skipsHiddenFiles]) {
+            self.childFolders = childURLs
+                .map { $0.resolvingSymlinksInPath().standardizedFileURL }
+                .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+                .map { FolderItem(url: $0, kind: .child) }
+                .sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+        } else {
+            self.childFolders = []
+        }
+
+        // Scan playable audio files in currentFolder
+        let audioURLs = scanAudioFilesInFolder(standardURL)
+        let tracks = audioURLs.map { AudioTrack.quick(from: $0) }
+        self.queue = tracks
+        self.statusMessage = "\(tracks.count) audio file(s) in \(standardURL.lastPathComponent)"
+
+        // Track selection / playback
+        if let target = selectTrackURL {
+            let targetPath = target.resolvingSymlinksInPath().standardizedFileURL.path
+            if let matched = tracks.first(where: { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == targetPath }) {
+                self.playTrack(matched)
+            } else if autoPlay, let first = tracks.first {
+                self.playTrack(first)
+            }
+        } else if autoPlay, let first = tracks.first {
+            self.playTrack(first)
+        } else if let first = tracks.first, selectedTrackID == nil {
+            self.selectedTrackID = first.id
+        }
+
+        // Background metadata enrichment
+        let currentTracks = self.queue
         Task.detached(priority: .utility) {
-            for track in quickTracks {
+            for track in currentTracks {
                 let enriched = await AudioTrack.load(from: track.url, id: track.id)
                 await MainActor.run {
                     if let index = self.queue.firstIndex(where: { $0.id == track.id }) {
@@ -51,32 +132,55 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public func openAndPlayURLs(_ urls: [URL]) {
-        let audioURLs = resolveAudioURLs(from: urls)
-        guard !audioURLs.isEmpty else {
-            statusMessage = "No supported audio files found"
-            return
+    public func scanAudioFilesInFolder(_ folderURL: URL) -> [URL] {
+        let standardURL = folderURL.resolvingSymlinksInPath().standardizedFileURL
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(at: standardURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            return []
         }
 
-        // Create tracks instantly
-        let quickTracks = audioURLs.map { AudioTrack.quick(from: $0) }
-        self.queue.append(contentsOf: quickTracks)
-        self.statusMessage = "Playing \(quickTracks.first?.filename ?? "")"
-
-        if let first = quickTracks.first {
-            self.playTrack(first)
-        }
-
-        // Background enrichment
-        Task.detached(priority: .utility) {
-            for track in quickTracks {
-                let enriched = await AudioTrack.load(from: track.url, id: track.id)
-                await MainActor.run {
-                    if let index = self.queue.firstIndex(where: { $0.id == track.id }) {
-                        self.queue[index] = enriched
-                    }
-                }
+        return items
+            .map { $0.resolvingSymlinksInPath().standardizedFileURL }
+            .filter { url in
+                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return false }
+                return AppState.supportedAudioExtensions.contains(url.pathExtension.lowercased())
             }
+            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+    }
+
+    public func openAndPlayURLs(_ urls: [URL]) {
+        guard let firstURL = urls.first else { return }
+        _ = firstURL.startAccessingSecurityScopedResource()
+
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: firstURL.path, isDirectory: &isDir) {
+            if isDir.boolValue {
+                navigateToFolder(firstURL, autoPlay: true)
+            } else {
+                let containingFolder = firstURL.deletingLastPathComponent()
+                navigateToFolder(containingFolder, selectTrackURL: firstURL, autoPlay: true)
+            }
+        }
+    }
+
+    public func addURLs(_ urls: [URL], autoPlayFirst: Bool = false) {
+        guard let firstURL = urls.first else { return }
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: firstURL.path, isDirectory: &isDir) {
+            if isDir.boolValue {
+                navigateToFolder(firstURL, autoPlay: autoPlayFirst)
+            } else {
+                let containingFolder = firstURL.deletingLastPathComponent()
+                navigateToFolder(containingFolder, selectTrackURL: firstURL, autoPlay: autoPlayFirst)
+            }
+        }
+    }
+
+    public func navigateUpToParent() {
+        if let parent = parentFolderURL {
+            navigateToFolder(parent)
         }
     }
 
@@ -94,6 +198,7 @@ public final class AppState: ObservableObject {
     public func playNext(userInitiated: Bool = true) {
         guard !queue.isEmpty else { return }
 
+        // If continuous playback is disabled and this was an automatic transition, stop playback
         if !userInitiated && !audioEngine.isContinuousPlayback {
             audioEngine.stop()
             statusMessage = "Playback completed"
@@ -108,7 +213,7 @@ public final class AppState: ObservableObject {
                 playTrack(queue[0])
             } else {
                 audioEngine.stop()
-                statusMessage = "Playback ended"
+                statusMessage = "Folder playback completed"
             }
         } else {
             playTrack(queue[0])
@@ -156,14 +261,14 @@ public final class AppState: ObservableObject {
         audioEngine.stop()
         queue.removeAll()
         selectedTrackID = nil
-        statusMessage = "Queue cleared"
+        statusMessage = "Cleared"
     }
 
     public func openFileDialog() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
+        panel.allowsMultipleSelection = false
         panel.allowsOtherFileTypes = true
         panel.allowedContentTypes = [
             .audio,
@@ -171,18 +276,14 @@ public final class AppState: ObservableObject {
             .directory,
             .item
         ]
-        panel.message = "Choose audio files or folders to open"
+        panel.message = "Choose an audio file or folder to browse"
 
-        if panel.runModal() == .OK {
-            openAndPlayURLs(panel.urls)
+        if panel.runModal() == .OK, let url = panel.url {
+            openAndPlayURLs([url])
         }
     }
 
     public func resolveAudioURLs(from urls: [URL]) -> [URL] {
-        let supportedExtensions: Set<String> = [
-            "mp3", "wav", "wave", "flac", "m4a", "aac", "aiff", "aif", "caf", "alac", "ogg", "oga", "opus", "mp4", "m4b", "m4r"
-        ]
-
         var results: [URL] = []
         let fileManager = FileManager.default
 
@@ -194,7 +295,7 @@ public final class AppState: ObservableObject {
                     if let enumerator = fileManager.enumerator(at: url, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) {
                         for case let fileURL as URL in enumerator {
                             _ = fileURL.startAccessingSecurityScopedResource()
-                            if supportedExtensions.contains(fileURL.pathExtension.lowercased()) {
+                            if AppState.supportedAudioExtensions.contains(fileURL.pathExtension.lowercased()) {
                                 results.append(fileURL)
                             }
                         }
@@ -207,86 +308,5 @@ public final class AppState: ObservableObject {
             }
         }
         return results
-    }
-
-    /// Generates demo stereo tones and chords for immediate testing if the user launches without files
-    public func loadDemoAudioFilesIfNeeded() {
-        guard queue.isEmpty else { return }
-        Task {
-            let fileManager = FileManager.default
-            let appSupport = fileManager.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Stanza/DemoAudio")
-            try? fileManager.createDirectory(at: appSupport, withIntermediateDirectories: true)
-
-            let demo1URL = appSupport.appendingPathComponent("01 Stanza - Ambient Stereo Synth.wav")
-            let demo2URL = appSupport.appendingPathComponent("02 Stanza - Dual Frequency Test.wav")
-
-            if !fileManager.fileExists(atPath: demo1URL.path) {
-                generateDemoWav(at: demo1URL, duration: 12.0, type: .ambientChords)
-            }
-            if !fileManager.fileExists(atPath: demo2URL.path) {
-                generateDemoWav(at: demo2URL, duration: 8.0, type: .dualFreqSweep)
-            }
-
-            self.addURLs([demo1URL, demo2URL], autoPlayFirst: false)
-        }
-    }
-
-    private enum DemoType {
-        case ambientChords
-        case dualFreqSweep
-    }
-
-    private func generateDemoWav(at url: URL, duration: Double, type: DemoType) {
-        let sampleRate: Double = 44100.0
-        let totalFrames = Int(duration * sampleRate)
-        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2),
-              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(totalFrames)) else {
-            return
-        }
-
-        buffer.frameLength = AVAudioFrameCount(totalFrames)
-        guard let channels = buffer.floatChannelData else { return }
-
-        let left = channels[0]
-        let right = channels[1]
-
-        for i in 0..<totalFrames {
-            let t = Double(i) / sampleRate
-            let envelope = min(1.0, min(t / 0.5, (duration - t) / 0.5))
-
-            switch type {
-            case .ambientChords:
-                // Rich stereo ambient pad (different frequencies on Left and Right)
-                let lTone1 = sin(2.0 * .pi * 220.0 * t) * 0.25
-                let lTone2 = sin(2.0 * .pi * 329.63 * t) * 0.20
-                let lTone3 = sin(2.0 * .pi * 440.0 * t) * 0.15
-                let lSweep = sin(2.0 * .pi * (110.0 + 30.0 * sin(t * 1.5)) * t) * 0.2
-
-                let rTone1 = sin(2.0 * .pi * 277.18 * t) * 0.25
-                let rTone2 = sin(2.0 * .pi * 392.0 * t) * 0.20
-                let rTone3 = sin(2.0 * .pi * 554.37 * t) * 0.15
-                let rSweep = sin(2.0 * .pi * (164.81 + 40.0 * cos(t * 1.2)) * t) * 0.2
-
-                left[i] = Float((lTone1 + lTone2 + lTone3 + lSweep) * envelope * 0.7)
-                right[i] = Float((rTone1 + rTone2 + rTone3 + rSweep) * envelope * 0.7)
-
-            case .dualFreqSweep:
-                // Left channel sweeps low to mid, Right channel sweeps mid to high
-                let lFreq = 80.0 + (t / duration) * 800.0
-                let rFreq = 400.0 + (t / duration) * 3500.0
-                let lP = sin(2.0 * .pi * lFreq * t) * 0.4
-                let rP = sin(2.0 * .pi * rFreq * t) * 0.4
-
-                left[i] = Float(lP * envelope)
-                right[i] = Float(rP * envelope)
-            }
-        }
-
-        do {
-            let audioFile = try AVAudioFile(forWriting: url, settings: format.settings)
-            try audioFile.write(from: buffer)
-        } catch {
-            print("Failed to write demo file: \(error)")
-        }
     }
 }

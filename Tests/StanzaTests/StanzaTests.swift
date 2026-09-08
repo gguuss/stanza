@@ -129,18 +129,76 @@ final class StanzaTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenAndPlayURLsAddsToQueue() {
-        let appState = AppState()
-        let urls = [
-            URL(fileURLWithPath: "/Music/Track1.mp3"),
-            URL(fileURLWithPath: "/Music/Track2.wav")
-        ]
+    func testOpenAndPlayURLsAddsToQueue() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
 
-        appState.openAndPlayURLs(urls)
+        let track1URL = tempDir.appendingPathComponent("Track1.mp3")
+        let track2URL = tempDir.appendingPathComponent("Track2.wav")
+        try "dummy1".write(to: track1URL, atomically: true, encoding: .utf8)
+        try "dummy2".write(to: track2URL, atomically: true, encoding: .utf8)
+
+        let appState = AppState()
+        appState.openAndPlayURLs([track1URL, track2URL])
+
+        XCTAssertEqual(appState.currentFolderURL?.standardizedFileURL, tempDir.standardizedFileURL)
         XCTAssertEqual(appState.queue.count, 2)
-        XCTAssertEqual(appState.queue[0].filename, "Track1.mp3")
-        XCTAssertEqual(appState.queue[1].filename, "Track2.wav")
-        XCTAssertEqual(appState.selectedTrackID, appState.queue[0].id)
+        XCTAssertTrue(appState.queue.contains(where: { $0.filename == "Track1.mp3" }))
+        XCTAssertTrue(appState.queue.contains(where: { $0.filename == "Track2.wav" }))
+        XCTAssertEqual(appState.selectedTrackID, appState.queue.first(where: { $0.url == track1URL })?.id)
+    }
+
+    @MainActor
+    func testFolderScanningAndNavigation() throws {
+        let rootTempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let albumADir = rootTempDir.appendingPathComponent("AlbumA")
+        let albumBDir = rootTempDir.appendingPathComponent("AlbumB")
+        let bonusDir = albumADir.appendingPathComponent("Bonus")
+
+        try FileManager.default.createDirectory(at: albumADir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: albumBDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: bonusDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: rootTempDir) }
+
+        let trackA1 = albumADir.appendingPathComponent("01_song.mp3")
+        let trackA2 = albumADir.appendingPathComponent("02_song.flac")
+        let trackB1 = albumBDir.appendingPathComponent("01_other.wav")
+        let bonusTrack = bonusDir.appendingPathComponent("extra.m4a")
+
+        try "a1".write(to: trackA1, atomically: true, encoding: .utf8)
+        try "a2".write(to: trackA2, atomically: true, encoding: .utf8)
+        try "b1".write(to: trackB1, atomically: true, encoding: .utf8)
+        try "bonus".write(to: bonusTrack, atomically: true, encoding: .utf8)
+
+        let appState = AppState()
+
+        // 1. Open trackA1 -> should navigate to AlbumA
+        appState.openAndPlayURLs([trackA1])
+
+        XCTAssertEqual(appState.currentFolderURL?.standardizedFileURL, albumADir.standardizedFileURL)
+        XCTAssertEqual(appState.parentFolderURL?.standardizedFileURL, rootTempDir.standardizedFileURL)
+        XCTAssertEqual(appState.queue.count, 2)
+        XCTAssertEqual(appState.selectedTrackID, appState.queue.first(where: { $0.url == trackA1 })?.id)
+
+        // Verify siblings: AlbumA and AlbumB
+        let siblingNames = appState.siblingFolders.map { $0.name }
+        XCTAssertTrue(siblingNames.contains("AlbumA"))
+        XCTAssertTrue(siblingNames.contains("AlbumB"))
+
+        // Verify child folder: Bonus
+        let childNames = appState.childFolders.map { $0.name }
+        XCTAssertTrue(childNames.contains("Bonus"))
+
+        // 2. Navigate to sibling folder AlbumB
+        appState.navigateToFolder(albumBDir)
+        XCTAssertEqual(appState.currentFolderURL?.standardizedFileURL, albumBDir.standardizedFileURL)
+        XCTAssertEqual(appState.queue.count, 1)
+        XCTAssertEqual(appState.queue.first?.filename, "01_other.wav")
+
+        // 3. Navigate up to parent (rootTempDir)
+        appState.navigateUpToParent()
+        XCTAssertEqual(appState.currentFolderURL?.standardizedFileURL, rootTempDir.standardizedFileURL)
     }
 
     @MainActor
@@ -184,13 +242,18 @@ final class StanzaTests: XCTestCase {
     }
 
     @MainActor
-    func testContinuousPlaybackDisabling() {
+    func testContinuousPlaybackDisabling() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let track1URL = tempDir.appendingPathComponent("Track1.mp3")
+        let track2URL = tempDir.appendingPathComponent("Track2.mp3")
+        try "dummy1".write(to: track1URL, atomically: true, encoding: .utf8)
+        try "dummy2".write(to: track2URL, atomically: true, encoding: .utf8)
+
         let appState = AppState()
-        let urls = [
-            URL(fileURLWithPath: "/Music/Track1.mp3"),
-            URL(fileURLWithPath: "/Music/Track2.mp3")
-        ]
-        appState.openAndPlayURLs(urls)
+        appState.openAndPlayURLs([track1URL, track2URL])
         XCTAssertEqual(appState.queue.count, 2)
         XCTAssertEqual(appState.selectedTrackID, appState.queue[0].id)
 

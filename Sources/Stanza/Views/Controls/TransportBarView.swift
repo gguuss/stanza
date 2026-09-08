@@ -4,8 +4,8 @@ public struct TransportBarView: View {
     @ObservedObject var audioEngine: AudioEngineController
     let onPrevious: () -> Void
     let onNext: () -> Void
-    let onAddFiles: () -> Void
-    let onClearQueue: () -> Void
+    let onOpenFolder: () -> Void
+    let onRevealInFinder: () -> Void
 
     @State private var showRemainingTime: Bool = false
 
@@ -13,14 +13,14 @@ public struct TransportBarView: View {
         audioEngine: AudioEngineController,
         onPrevious: @escaping () -> Void,
         onNext: @escaping () -> Void,
-        onAddFiles: @escaping () -> Void,
-        onClearQueue: @escaping () -> Void
+        onOpenFolder: @escaping () -> Void,
+        onRevealInFinder: @escaping () -> Void
     ) {
         self.audioEngine = audioEngine
         self.onPrevious = onPrevious
         self.onNext = onNext
-        self.onAddFiles = onAddFiles
-        self.onClearQueue = onClearQueue
+        self.onOpenFolder = onOpenFolder
+        self.onRevealInFinder = onRevealInFinder
     }
 
     public var body: some View {
@@ -175,13 +175,13 @@ public struct TransportBarView: View {
 
             Divider().frame(height: 20)
 
-            // Queue actions (+ Add Files, Clear)
+            // Explorer actions (Open Folder, Reveal in Finder)
             HStack(spacing: 6) {
-                Button(action: onAddFiles) {
+                Button(action: onOpenFolder) {
                     HStack(spacing: 4) {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .bold))
-                        Text("Add...")
+                        Image(systemName: "folder.badge.plus")
+                            .font(.system(size: 11, weight: .semibold))
+                        Text("Open...")
                             .font(.system(size: 11, weight: .medium))
                     }
                     .padding(.horizontal, 8)
@@ -190,16 +190,16 @@ public struct TransportBarView: View {
                     .cornerRadius(4)
                 }
                 .buttonStyle(.plain)
-                .help("Add audio files or folders (Cmd+O)")
+                .help("Open audio file or folder to browse (Cmd+O)")
 
-                Button(action: onClearQueue) {
-                    Image(systemName: "trash")
+                Button(action: onRevealInFinder) {
+                    Image(systemName: "arrow.up.forward.app")
                         .font(.system(size: 11))
-                        .foregroundColor(.white.opacity(0.6))
+                        .foregroundColor(.white.opacity(0.7))
                         .padding(4)
                 }
                 .buttonStyle(.plain)
-                .help("Clear queue")
+                .help("Reveal current folder in Finder")
             }
         }
         .padding(.horizontal, 12)

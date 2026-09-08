@@ -1,11 +1,15 @@
 import SwiftUI
 
-public struct QueueTableView: View {
+public struct FolderFilesTableView: View {
     @ObservedObject var appState: AppState
+
+    public init(appState: AppState) {
+        self.appState = appState
+    }
 
     public var body: some View {
         VStack(spacing: 0) {
-            // Table Header Bar (matching Screenshot 1)
+            // Table Header Bar
             HStack(spacing: 8) {
                 Text("#")
                     .font(.system(size: 10, weight: .bold, design: .monospaced))
@@ -15,27 +19,27 @@ public struct QueueTableView: View {
                 Text("File name")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
-                    .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+                    .frame(minWidth: 140, maxWidth: .infinity, alignment: .leading)
 
                 Text("Size")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
-                    .frame(width: 65, alignment: .trailing)
+                    .frame(width: 60, alignment: .trailing)
 
                 Text("Length")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
-                    .frame(width: 65, alignment: .trailing)
+                    .frame(width: 60, alignment: .trailing)
 
                 Text("Title")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
-                    .frame(minWidth: 100, maxWidth: 200, alignment: .leading)
+                    .frame(minWidth: 80, maxWidth: 160, alignment: .leading)
 
                 Text("Artist")
                     .font(.system(size: 10, weight: .bold))
                     .foregroundColor(.white.opacity(0.5))
-                    .frame(minWidth: 80, maxWidth: 140, alignment: .leading)
+                    .frame(minWidth: 70, maxWidth: 130, alignment: .leading)
 
                 Text("Format")
                     .font(.system(size: 10, weight: .bold))
@@ -43,24 +47,24 @@ public struct QueueTableView: View {
                     .frame(width: 45, alignment: .center)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 4)
+            .padding(.vertical, 6)
             .background(Color(nsColor: NSColor(red: 0.17, green: 0.18, blue: 0.20, alpha: 1.0)))
 
             Divider().background(Color.black.opacity(0.4))
 
-            // Enqueued Tracks List
+            // Playable Audio Files in Current Folder
             if appState.queue.isEmpty {
                 VStack(spacing: 12) {
                     Spacer()
-                    Image(systemName: "music.note.list")
-                        .font(.system(size: 38))
-                        .foregroundColor(.white.opacity(0.15))
+                    Image(systemName: "music.note.slash")
+                        .font(.system(size: 34))
+                        .foregroundColor(.white.opacity(0.18))
 
-                    Text("Queue is empty")
+                    Text("No playable audio files in this folder")
                         .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.white.opacity(0.4))
+                        .foregroundColor(.white.opacity(0.45))
 
-                    Text("Drag and drop audio files or folders here\nor click the + Add button above")
+                    Text("Select another folder from the left pane\nor drop audio files into Stanza")
                         .font(.system(size: 11))
                         .foregroundColor(.white.opacity(0.25))
                         .multilineTextAlignment(.center)
@@ -94,9 +98,6 @@ public struct QueueTableView: View {
                                 Button("Play") {
                                     appState.playTrack(track)
                                 }
-                                Button("Remove from Queue") {
-                                    appState.removeTrack(id: track.id)
-                                }
                                 Divider()
                                 Button("Reveal in Finder") {
                                     NSWorkspace.shared.activateFileViewerSelecting([track.url])
@@ -112,9 +113,9 @@ public struct QueueTableView: View {
 
             Divider().background(Color.black.opacity(0.4))
 
-            // Bottom Status & Notification Bar (matching Screenshot 1: 11 Items, 115.67 MB)
+            // Bottom Status Bar
             HStack {
-                Text("\(appState.queue.count) item\(appState.queue.count == 1 ? "" : "s"), \(totalQueueSize)")
+                Text("\(appState.queue.count) file\(appState.queue.count == 1 ? "" : "s") in folder, \(totalQueueSize)")
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundColor(.white.opacity(0.45))
 
@@ -149,14 +150,8 @@ public struct QueueTableView: View {
     }
 
     private func formatTotalDuration(_ duration: TimeInterval) -> String {
-        let total = Int(duration)
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let seconds = total % 60
-        if hours > 0 {
-            return String(format: "%d:%02d:%02d", hours, minutes, seconds)
-        } else {
-            return String(format: "%d:%02d", minutes, seconds)
-        }
+        let m = Int(duration) / 60
+        let s = Int(duration) % 60
+        return String(format: "%d:%02d", m, s)
     }
 }

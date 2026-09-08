@@ -16,26 +16,37 @@ public struct MainPlayerView: View {
             )
             .frame(minHeight: 140, idealHeight: 200, maxHeight: 400)
 
-            // Middle & Bottom: Transport Bar + Queue List
+            // Middle & Bottom: Transport Bar + File Explorer (Left: Folders, Right: Audio Files)
             VStack(spacing: 0) {
                 TransportBarView(
                     audioEngine: appState.audioEngine,
                     onPrevious: { appState.playPrevious() },
                     onNext: { appState.playNext(userInitiated: true) },
-                    onAddFiles: { appState.openFileDialog() },
-                    onClearQueue: { appState.clearQueue() }
+                    onOpenFolder: { appState.openFileDialog() },
+                    onRevealInFinder: {
+                        if let folder = appState.currentFolderURL {
+                            NSWorkspace.shared.activateFileViewerSelecting([folder])
+                        }
+                    }
                 )
 
                 Divider().background(Color.black.opacity(0.6))
 
-                QueueTableView(appState: appState)
+                FileExplorerSplitView(appState: appState)
             }
-            .frame(minHeight: 200)
+            .frame(minHeight: 220)
         }
-        .frame(minWidth: 700, minHeight: 480)
+        .frame(minWidth: 720, minHeight: 480)
         .background(Color(nsColor: NSColor(red: 0.14, green: 0.15, blue: 0.17, alpha: 1.0)))
         .audioFileDropTarget { urls in
             appState.openAndPlayURLs(urls)
+        }
+        .onAppear {
+            if appState.currentFolderURL == nil {
+                if let music = appState.quickAccessFolders.first?.url {
+                    appState.navigateToFolder(music, autoPlay: false)
+                }
+            }
         }
     }
 }

@@ -67,17 +67,24 @@ struct StanzaApp: App {
         .commands {
             // File Menu
             CommandGroup(replacing: .newItem) {
-                Button("Open Audio Files...") {
+                Button("Open File or Folder...") {
                     appState.openFileDialog()
                 }
                 .keyboardShortcut("o", modifiers: .command)
 
+                Button("Go to Parent Folder") {
+                    appState.navigateUpToParent()
+                }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+                .disabled(appState.parentFolderURL == nil)
+
                 Divider()
 
-                Button("Clear Queue") {
-                    appState.clearQueue()
+                Button("Reveal in Finder") {
+                    if let folder = appState.currentFolderURL {
+                        NSWorkspace.shared.activateFileViewerSelecting([folder])
+                    }
                 }
-                .keyboardShortcut("k", modifiers: [.command, .shift])
             }
 
             // Playback Menu
