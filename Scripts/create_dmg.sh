@@ -51,9 +51,20 @@ create-dmg \
 # Clean up staging
 rm -rf "$STAGING_DIR"
 
-# Ad-hoc sign the DMG
-echo "==> Signing DMG..."
-codesign --force --sign - "$OUTPUT_DMG"
+# Sign the DMG
+SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application:" | head -n 1 | awk -F'"' '{print $2}')
+if [ -z "$SIGNING_IDENTITY" ]; then
+    SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development:" | head -n 1 | awk -F'"' '{print $2}')
+fi
+
+if [ -n "$SIGNING_IDENTITY" ]; then
+    echo "==> Signing DMG with Developer Identity: $SIGNING_IDENTITY..."
+    codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$OUTPUT_DMG"
+else
+    echo "==> Signing DMG with ad-hoc signature..."
+    codesign --force --sign - "$OUTPUT_DMG"
+fi
 
 echo "==> Successfully created DMG installer at: $OUTPUT_DMG"
+
 

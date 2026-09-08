@@ -75,13 +75,27 @@ cat << 'EOF' > "$CONTENTS_DIR/Info.plist"
 </plist>
 EOF
 
-# Strip extended attributes and seal with ad-hoc code signature
-echo "Signing Stanza.app..."
+# Strip extended attributes
 xattr -cr "$APP_DIR"
-codesign --force --deep --sign - "$APP_DIR"
+
+# Check if an Apple Developer identity is installed in Keychain
+SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Developer ID Application:" | head -n 1 | awk -F'"' '{print $2}')
+
+if [ -z "$SIGNING_IDENTITY" ]; then
+    SIGNING_IDENTITY=$(security find-identity -v -p codesigning | grep "Apple Development:" | head -n 1 | awk -F'"' '{print $2}')
+fi
+
+if [ -n "$SIGNING_IDENTITY" ]; then
+    echo "Signing Stanza.app with Developer Identity: $SIGNING_IDENTITY..."
+    codesign --force --deep --options runtime --timestamp --entitlements "$DIR/entitlements.plist" --sign "$SIGNING_IDENTITY" "$APP_DIR"
+else
+    echo "No Apple Developer certificate found in Keychain. Using ad-hoc signature..."
+    codesign --force --deep --sign - "$APP_DIR"
+fi
 
 # Verify signature integrity
 codesign -vvv --deep --strict "$APP_DIR"
 
 echo "Stanza.app successfully packaged and signed at: $APP_DIR"
+
 
