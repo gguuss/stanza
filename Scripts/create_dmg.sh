@@ -4,7 +4,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 DMG_NAME="Stanza-${VERSION}.dmg"
 OUTPUT_DMG="$DIR/build/$DMG_NAME"
 STAGING_DIR="$DIR/build/dmg_staging"
