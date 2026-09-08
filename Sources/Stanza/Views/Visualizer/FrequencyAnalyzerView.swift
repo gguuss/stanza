@@ -3,9 +3,20 @@ import SwiftUI
 public struct FrequencyAnalyzerView: View {
     @ObservedObject var audioEngine: AudioEngineController
 
-    @State private var bands: [Float] = [Float](repeating: 0, count: 64)
-    @State private var peaks: [Float] = [Float](repeating: 0, count: 64)
-    @State private var timer: Timer?
+    private let octaveFrequencies: [(label: String, freq: Float)] = [
+        ("30", 30),
+        ("60", 60),
+        ("125", 125),
+        ("250", 250),
+        ("500", 500),
+        ("1k", 1000),
+        ("2k", 2000),
+        ("4k", 4000),
+        ("8k", 8000),
+        ("16k", 16000)
+    ]
+
+    private let dbLevels: [Int] = [0, -6, -12, -18, -24, -36, -48]
 
     public init(audioEngine: AudioEngineController) {
         self.audioEngine = audioEngine
@@ -15,83 +26,137 @@ public struct FrequencyAnalyzerView: View {
         GeometryReader { _ in
             ZStack(alignment: .bottom) {
                 // Dark background
-                Color(nsColor: NSColor(red: 0.12, green: 0.13, blue: 0.15, alpha: 1.0))
+                Color(nsColor: NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0))
 
-                // dB grid lines
+                // dB horizontal grid lines
                 VStack(spacing: 0) {
-                    ForEach([0, -6, -12, -24, -36, -48], id: \.self) { db in
+                    ForEach(dbLevels, id: \.self) { db in
                         HStack {
                             Text("\(db) dB")
-                                .font(.system(size: 9, weight: .semibold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.2))
+                                .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.22))
                                 .padding(.leading, 6)
                             Spacer()
                         }
-                        if db != -48 {
+                        if db != dbLevels.last {
                             Spacer()
                             Divider().background(Color.white.opacity(0.04))
                         }
                     }
                 }
-                .padding(.vertical, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 24)
 
-                // FFT Spectrum Bars
+                // Frequency vertical grid lines
                 Canvas { context, size in
                     let w = size.width
-                    let h = size.height
-                    let count = bands.count
-                    guard count > 0 else { return }
-
-                    let gap: CGFloat = 1.5
-                    let totalGaps = CGFloat(count - 1) * gap
-                    let barWidth = max(2.0, (w - totalGaps) / CGFloat(count))
-
-                    for i in 0..<count {
-                        let x = CGFloat(i) * (barWidth + gap)
-                        let val = CGFloat(bands[i])
-                        let barHeight = max(1.0, val * h * 0.92)
-                        let y = h - barHeight
-
-                        let rect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
-
-                        // Vertical gradient: Teal -> Cyan -> Orange at peaks
-                        let gradient = Gradient(colors: [
-                            Color(red: 1.0, green: 0.45, blue: 0.15),
-                            Color(red: 0.2, green: 0.75, blue: 0.95),
-                            Color(red: 0.1, green: 0.5, blue: 0.8)
-                        ])
-                        context.fill(Path(rect), with: .linearGradient(gradient, startPoint: CGPoint(x: x, y: h - h * 0.92), endPoint: CGPoint(x: x, y: h)))
-
-                        // Peak hold marker
-                        let peakVal = CGFloat(peaks[i])
-                        if peakVal > 0.02 {
-                            let peakY = max(2, h - (peakVal * h * 0.92) - 2)
-                            let peakRect = CGRect(x: x, y: peakY, width: barWidth, height: 2)
-                            context.fill(Path(peakRect), with: .color(Color(red: 1.0, green: 0.8, blue: 0.3)))
-                        }
+                    let h = size.height - 20
+                    for item in octaveFrequencies {
+                        let x = AudioAnalyzer.xFraction(for: item.freq) * w
+                        var path = Path()
+                        path.move(to: CGPoint(x: x, y: 4))
+                        path.addLine(to: CGPoint(x: x, y: h))
+                        context.stroke(path, with: .color(Color.white.opacity(0.04)), lineWidth: 1)
                     }
                 }
 
-                // Frequency labels at the bottom
-                HStack {
-                    Text("30 Hz")
-                    Spacer()
-                    Text("100 Hz")
-                    Spacer()
-                    Text("500 Hz")
-                    Spacer()
-                    Text("1 kHz")
-                    Spacer()
-                    Text("4 kHz")
-                    Spacer()
-                    Text("10 kHz")
-                    Spacer()
-                    Text("20 kHz")
+                // 120 FPS High-Detail Spectrum (128 Bands + Spline Curve + Peak Hold)
+                TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
+                    Canvas { context, size in
+                        let w = size.width
+                        let h = size.height
+                        let plotH = h - 22
+                        let data = AudioAnalyzer.shared.getCurrentData()
+                        let bands = data.spectrum
+                        let peaks = data.peaks
+                        let count = bands.count
+                        guard count > 0 else { return }
+
+                        let gap: CGFloat = 1.0
+                        let totalGaps = CGFloat(count - 1) * gap
+                        let barWidth = max(1.5, (w - totalGaps) / CGFloat(count))
+
+                        // Gradient: deep blue -> electric cyan -> neon amber -> bright coral
+                        let barGradient = Gradient(stops: [
+                            .init(color: Color(red: 0.05, green: 0.35, blue: 0.70), location: 0.0),
+                            .init(color: Color(red: 0.10, green: 0.75, blue: 0.95), location: 0.55),
+                            .init(color: Color(red: 1.00, green: 0.65, blue: 0.15), location: 0.85),
+                            .init(color: Color(red: 1.00, green: 0.28, blue: 0.15), location: 1.0)
+                        ])
+
+                        var curvePath = Path()
+                        var fillPath = Path()
+
+                        for i in 0..<count {
+                            let x = CGFloat(i) * (barWidth + gap)
+                            let val = CGFloat(bands[i])
+                            let barHeight = max(1.0, val * (plotH - 8))
+                            let y = plotH - barHeight
+
+                            // Draw rounded bar
+                            let barRect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
+                            let roundedBar = Path(roundedRect: barRect, cornerRadius: 1.0)
+                            context.fill(
+                                roundedBar,
+                                with: .linearGradient(
+                                    barGradient,
+                                    startPoint: CGPoint(x: x, y: plotH),
+                                    endPoint: CGPoint(x: x, y: 10)
+                                )
+                            )
+
+                            // Peak Hold Cap
+                            let peakVal = CGFloat(peaks[i])
+                            if peakVal > 0.015 {
+                                let peakY = max(2, plotH - (peakVal * (plotH - 8)) - 2)
+                                let peakRect = CGRect(x: x, y: peakY, width: barWidth, height: 2)
+                                context.fill(
+                                    Path(roundedRect: peakRect, cornerRadius: 0.8),
+                                    with: .color(Color(red: 1.0, green: 0.85, blue: 0.40))
+                                )
+                            }
+
+                            // Smooth curve points
+                            let centerX = x + barWidth * 0.5
+                            if i == 0 {
+                                curvePath.move(to: CGPoint(x: centerX, y: y))
+                                fillPath.move(to: CGPoint(x: centerX, y: plotH))
+                                fillPath.addLine(to: CGPoint(x: centerX, y: y))
+                            } else {
+                                curvePath.addLine(to: CGPoint(x: centerX, y: y))
+                                fillPath.addLine(to: CGPoint(x: centerX, y: y))
+                            }
+                        }
+
+                        // Close fill path
+                        let lastX = CGFloat(count - 1) * (barWidth + gap) + barWidth * 0.5
+                        fillPath.addLine(to: CGPoint(x: lastX, y: plotH))
+                        fillPath.closeSubpath()
+
+                        // Ambient glow fill under curve
+                        context.fill(fillPath, with: .color(Color(red: 0.1, green: 0.7, blue: 0.9).opacity(0.08)))
+
+                        // High-contrast accent stroke line across band tops
+                        context.stroke(
+                            curvePath,
+                            with: .color(Color(red: 0.5, green: 0.95, blue: 1.0).opacity(0.75)),
+                            lineWidth: 1.2
+                        )
+                    }
                 }
-                .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundColor(.white.opacity(0.3))
-                .padding(.horizontal, 12)
-                .padding(.bottom, 4)
+
+                // Frequency labels at the bottom positioned precisely at their log positions
+                GeometryReader { freqGeo in
+                    let w = freqGeo.size.width
+                    ForEach(octaveFrequencies, id: \.freq) { item in
+                        let x = AudioAnalyzer.xFraction(for: item.freq) * w
+                        Text(item.label)
+                            .font(.system(size: 8, weight: .semibold, design: .monospaced))
+                            .foregroundColor(.white.opacity(0.35))
+                            .position(x: x, y: freqGeo.size.height - 10)
+                    }
+                }
+                .frame(height: 20)
 
                 // Mini scrub seekbar at very bottom
                 VStack {
@@ -121,27 +186,5 @@ public struct FrequencyAnalyzerView: View {
                 }
             }
         }
-        .onAppear {
-            startDisplayUpdate()
-        }
-        .onDisappear {
-            stopDisplayUpdate()
-        }
-    }
-
-    private func startDisplayUpdate() {
-        stopDisplayUpdate()
-        let t = Timer(timeInterval: 1.0 / 60.0, repeats: true) { _ in
-            let data = AudioAnalyzer.shared.getCurrentData()
-            self.bands = data.spectrum
-            self.peaks = data.peaks
-        }
-        RunLoop.main.add(t, forMode: .common)
-        timer = t
-    }
-
-    private func stopDisplayUpdate() {
-        timer?.invalidate()
-        timer = nil
     }
 }

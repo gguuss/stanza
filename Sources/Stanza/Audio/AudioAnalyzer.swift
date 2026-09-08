@@ -12,8 +12,8 @@ public struct StereoLevels: Sendable {
 public final class AudioAnalyzer: @unchecked Sendable {
     public static let shared = AudioAnalyzer()
 
-    public let fftSize: Int = 1024
-    public let bandCount: Int = 64
+    public let fftSize: Int = 2048
+    public let bandCount: Int = 128
 
     private let log2n: vDSP_Length
     private let fftSetup: vDSP_DFT_Setup?
@@ -21,6 +21,10 @@ public final class AudioAnalyzer: @unchecked Sendable {
 
     // Frequency bands
     private var bandFrequencies: [(low: Float, high: Float)] = []
+
+    // Sliding history buffers for continuous overlapping STFT
+    private var leftHistory: [Float]
+    private var rightHistory: [Float]
 
     // Preallocated FFT working buffers (zero allocations on audio thread)
     private var windowedSamples: [Float]
@@ -53,6 +57,9 @@ public final class AudioAnalyzer: @unchecked Sendable {
         self.window = [Float](repeating: 0, count: fftSize)
         vDSP_hann_window(&self.window, vDSP_Length(fftSize), Int32(vDSP_HANN_NORM))
 
+        self.leftHistory = [Float](repeating: 0, count: fftSize)
+        self.rightHistory = [Float](repeating: 0, count: fftSize)
+
         self.windowedSamples = [Float](repeating: 0, count: fftSize)
         self.realIn = [Float](repeating: 0, count: fftSize)
         self.imagIn = [Float](repeating: 0, count: fftSize)
@@ -81,6 +88,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
     public func reset() {
         lock.lock()
         defer { lock.unlock() }
+        leftHistory = [Float](repeating: 0, count: fftSize)
+        rightHistory = [Float](repeating: 0, count: fftSize)
         smoothedBands = [Float](repeating: 0, count: bandCount)
         smoothedLeftBands = [Float](repeating: 0, count: bandCount)
         smoothedRightBands = [Float](repeating: 0, count: bandCount)
@@ -90,8 +99,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
 
     private func setupLogBands(sampleRate: Float) {
         bandFrequencies.removeAll()
-        let minFreq: Float = 24.0
-        let maxFreq: Float = min(sampleRate * 0.48, 20000.0)
+        let minFreq: Float = 20.0
+        let maxFreq: Float = min(sampleRate * 0.49, 20000.0)
         let logMin = log10(minFreq)
         let logMax = log10(maxFreq)
         let step = (logMax - logMin) / Float(bandCount)
@@ -107,7 +116,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
         guard let channelData = buffer.floatChannelData else { return }
         let channelCount = Int(buffer.format.channelCount)
         let frameCount = Int(buffer.frameLength)
-        guard frameCount >= fftSize else { return }
+        guard frameCount > 0 else { return }
 
         let sampleRate = Float(buffer.format.sampleRate)
         if bandFrequencies.isEmpty || abs(sampleRate - 44100) > 1000 {
@@ -117,7 +126,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
         let leftSamples = channelData[0]
         let rightSamples = channelCount > 1 ? channelData[1] : channelData[0]
 
-        // Calculate levels
+        // Fast RMS & Peak on incoming buffer
         var leftPeak: Float = 0
         var rightPeak: Float = 0
         var leftRMS: Float = 0
@@ -127,11 +136,30 @@ public final class AudioAnalyzer: @unchecked Sendable {
         vDSP_rmsqv(leftSamples, 1, &leftRMS, vDSP_Length(frameCount))
         vDSP_rmsqv(rightSamples, 1, &rightRMS, vDSP_Length(frameCount))
 
-        // Compute FFT for Left & Right in-place
-        computeFFTInPlace(samples: leftSamples, frameCount: frameCount, outputMagnitudes: &leftMagnitudes)
-        computeFFTInPlace(samples: rightSamples, frameCount: frameCount, outputMagnitudes: &rightMagnitudes)
+        // Update sliding history buffers for continuous STFT
+        if frameCount >= fftSize {
+            let offset = frameCount - fftSize
+            leftHistory.replaceSubrange(0..<fftSize, with: UnsafeBufferPointer(start: leftSamples.advanced(by: offset), count: fftSize))
+            rightHistory.replaceSubrange(0..<fftSize, with: UnsafeBufferPointer(start: rightSamples.advanced(by: offset), count: fftSize))
+        } else {
+            let shift = fftSize - frameCount
+            leftHistory.withUnsafeMutableBufferPointer { ptr in
+                guard let base = ptr.baseAddress else { return }
+                memmove(base, base + frameCount, shift * MemoryLayout<Float>.size)
+                memcpy(base + shift, leftSamples, frameCount * MemoryLayout<Float>.size)
+            }
+            rightHistory.withUnsafeMutableBufferPointer { ptr in
+                guard let base = ptr.baseAddress else { return }
+                memmove(base, base + frameCount, shift * MemoryLayout<Float>.size)
+                memcpy(base + shift, rightSamples, frameCount * MemoryLayout<Float>.size)
+            }
+        }
 
-        // Aggregate into logarithmic frequency bands in-place
+        // Compute FFT for Left & Right in-place
+        computeFFTInPlace(samples: leftHistory, outputMagnitudes: &leftMagnitudes)
+        computeFFTInPlace(samples: rightHistory, outputMagnitudes: &rightMagnitudes)
+
+        // Aggregate into 128 logarithmic frequency bands
         aggregateBands(magnitudes: leftMagnitudes, sampleRate: sampleRate, outputBands: &leftBandsScratch)
         aggregateBands(magnitudes: rightMagnitudes, sampleRate: sampleRate, outputBands: &rightBandsScratch)
 
@@ -145,9 +173,9 @@ public final class AudioAnalyzer: @unchecked Sendable {
             rightRMS: rightRMS
         )
 
-        // Ballistics smoothing: attack fast, release smooth
-        let attack: Float = 0.65
-        let decay: Float = 0.25
+        // Ballistics smoothing: attack fast for punchy transients, decay smooth
+        let attack: Float = 0.85
+        let decay: Float = 0.20
 
         for i in 0..<bandCount {
             let lTarget = leftBandsScratch[i]
@@ -163,7 +191,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
             if smoothedBands[i] > peakBands[i] {
                 peakBands[i] = smoothedBands[i]
             } else {
-                peakBands[i] = max(0, peakBands[i] - 0.015)
+                peakBands[i] = max(0, peakBands[i] - 0.008)
             }
 
             // Left
@@ -182,11 +210,12 @@ public final class AudioAnalyzer: @unchecked Sendable {
         }
     }
 
-    private func computeFFTInPlace(samples: UnsafePointer<Float>, frameCount: Int, outputMagnitudes: inout [Float]) {
+    private func computeFFTInPlace(samples: [Float], outputMagnitudes: inout [Float]) {
         guard let fftSetup = fftSetup else { return }
 
-        let offset = frameCount - fftSize
-        vDSP_vmul(samples.advanced(by: max(0, offset)), 1, window, 1, &windowedSamples, 1, vDSP_Length(fftSize))
+        samples.withUnsafeBufferPointer { sPtr in
+            vDSP_vmul(sPtr.baseAddress!, 1, window, 1, &windowedSamples, 1, vDSP_Length(fftSize))
+        }
 
         realIn = windowedSamples
         vDSP_vclr(&imagIn, 1, vDSP_Length(fftSize))
@@ -217,17 +246,31 @@ public final class AudioAnalyzer: @unchecked Sendable {
             let endBin = max(startBin + 1, min(magnitudes.count, Int(ceil(highFreq / binWidth))))
 
             var sum: Float = 0
+            var maxMag: Float = 0
             for bin in startBin..<endBin {
-                sum += magnitudes[bin]
+                let m = magnitudes[bin]
+                sum += m
+                if m > maxMag { maxMag = m }
             }
-            let avg = sum / Float(endBin - startBin)
+            let count = Float(endBin - startBin)
+            let avg = sum / count
+            let blended = avg * 0.65 + maxMag * 0.35
 
-            // Convert to dB scale [0, 1] range: -60 dB to 0 dB
-            let db = 20.0 * log10(max(avg, 0.0001))
-            let normalized = max(0.0, min(1.0, (db + 60.0) / 60.0))
-            let trebleBoost = 1.0 + Float(i) / Float(bandCount) * 0.5
-            outputBands[i] = min(1.0, normalized * trebleBoost)
+            // Convert to dB scale [0, 1] range: -66 dB to 0 dB
+            let db = 20.0 * log10(max(blended, 0.00005))
+            let normalized = max(0.0, min(1.0, (db + 66.0) / 66.0))
+            let tilt = 1.0 + Float(i) / Float(bandCount) * 0.45
+            outputBands[i] = min(1.0, normalized * tilt)
         }
+    }
+
+    public static func xFraction(for frequency: Float, sampleRate: Float = 44100.0) -> CGFloat {
+        let minFreq: Float = 20.0
+        let maxFreq: Float = min(sampleRate * 0.49, 20000.0)
+        let logMin = log10(minFreq)
+        let logMax = log10(maxFreq)
+        let logF = log10(max(minFreq, min(maxFreq, frequency)))
+        return CGFloat((logF - logMin) / (logMax - logMin))
     }
 
     public func getCurrentData() -> (spectrum: [Float], peaks: [Float], left: [Float], right: [Float], levels: StereoLevels) {
