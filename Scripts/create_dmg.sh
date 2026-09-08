@@ -34,6 +34,7 @@ echo "==> Creating $DMG_NAME installer..."
 rm -f "$OUTPUT_DMG"
 create-dmg \
   --volname "Stanza" \
+  --volicon "$DIR/Sources/Stanza/Resources/AppIcon.icns" \
   --background "$DIR/Scripts/dmg_background.png" \
   --window-pos 200 120 \
   --window-size 660 400 \

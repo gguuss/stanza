@@ -14,7 +14,8 @@ let package = Package(
         .executableTarget(
             name: "Stanza",
             dependencies: [],
-            path: "Sources/Stanza"
+            path: "Sources/Stanza",
+            resources: [.process("Resources")]
         ),
         .testTarget(
             name: "StanzaTests",
