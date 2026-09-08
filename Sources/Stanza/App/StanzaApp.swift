@@ -111,6 +111,24 @@ struct StanzaApp: App {
 
                 Divider()
 
+                Button(appState.audioEngine.isReversed ? "Play Forward" : "Reverse Playback") {
+                    appState.audioEngine.toggleReverse()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+
+                Button(appState.audioEngine.isContinuousPlayback ? "Disable Continuous Playback (Stop After Current)" : "Enable Continuous Playback") {
+                    appState.audioEngine.toggleContinuousPlayback()
+                }
+
+                if appState.audioEngine.loopRange != nil {
+                    Button("Clear Section Loop") {
+                        appState.audioEngine.clearLoop()
+                    }
+                    .keyboardShortcut(.escape, modifiers: [])
+                }
+
+                Divider()
+
                 Button("Volume Up") {
                     appState.audioEngine.volume = min(1.0, appState.audioEngine.volume + 0.05)
                 }

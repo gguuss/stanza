@@ -94,6 +94,12 @@ public final class AppState: ObservableObject {
     public func playNext(userInitiated: Bool = true) {
         guard !queue.isEmpty else { return }
 
+        if !userInitiated && !audioEngine.isContinuousPlayback {
+            audioEngine.stop()
+            statusMessage = "Playback completed"
+            return
+        }
+
         if let currentIndex = currentTrackIndex {
             let nextIndex = currentIndex + 1
             if nextIndex < queue.count {

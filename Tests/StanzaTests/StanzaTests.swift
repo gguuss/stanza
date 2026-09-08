@@ -182,4 +182,103 @@ final class StanzaTests: XCTestCase {
             engine.stop()
         }
     }
+
+    @MainActor
+    func testContinuousPlaybackDisabling() {
+        let appState = AppState()
+        let urls = [
+            URL(fileURLWithPath: "/Music/Track1.mp3"),
+            URL(fileURLWithPath: "/Music/Track2.mp3")
+        ]
+        appState.openAndPlayURLs(urls)
+        XCTAssertEqual(appState.queue.count, 2)
+        XCTAssertEqual(appState.selectedTrackID, appState.queue[0].id)
+
+        // Continuous playback ON by default
+        XCTAssertTrue(appState.audioEngine.isContinuousPlayback)
+        appState.playNext(userInitiated: false)
+        XCTAssertEqual(appState.selectedTrackID, appState.queue[1].id)
+
+        // Toggle Continuous playback OFF
+        appState.audioEngine.toggleContinuousPlayback()
+        XCTAssertFalse(appState.audioEngine.isContinuousPlayback)
+
+        // Automatic transition (userInitiated: false) should stop playback and not advance
+        appState.playNext(userInitiated: false)
+        XCTAssertEqual(appState.audioEngine.playbackState, .stopped)
+        XCTAssertEqual(appState.statusMessage, "Playback completed")
+
+        // Reset to track 0
+        appState.playTrack(appState.queue[0])
+        XCTAssertEqual(appState.selectedTrackID, appState.queue[0].id)
+
+        // User manual skip (userInitiated: true) should still advance even if continuous is OFF
+        appState.playNext(userInitiated: true)
+        XCTAssertEqual(appState.selectedTrackID, appState.queue[1].id)
+    }
+
+    @MainActor
+    func testSectionLoopRangeAndClearing() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let wavURL = tempDir.appendingPathComponent("test_loop.wav")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        let frameCount: AVAudioFrameCount = 44100 * 5 // 5 seconds
+        do {
+            let audioFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+            buffer.frameLength = frameCount
+            try audioFile.write(from: buffer)
+        }
+
+        let track = await AudioTrack.load(from: wavURL)
+        let engine = AudioEngineController.shared
+        engine.loadAndPlay(track: track)
+
+        // Set loop range within track
+        engine.setLoopRange(1.0...3.5)
+        XCTAssertNotNil(engine.loopRange)
+        XCTAssertEqual(engine.loopRange?.lowerBound ?? 0, 1.0, accuracy: 0.01)
+        XCTAssertEqual(engine.loopRange?.upperBound ?? 0, 3.5, accuracy: 0.01)
+
+        // Clear loop
+        engine.clearLoop()
+        XCTAssertNil(engine.loopRange)
+
+        engine.stop()
+    }
+
+    @MainActor
+    func testReversePlaybackToggle() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let wavURL = tempDir.appendingPathComponent("test_reverse.wav")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        let frameCount: AVAudioFrameCount = 44100 * 2 // 2 seconds
+        do {
+            let audioFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount)!
+            buffer.frameLength = frameCount
+            try audioFile.write(from: buffer)
+        }
+
+        let track = await AudioTrack.load(from: wavURL)
+        let engine = AudioEngineController.shared
+        engine.loadAndPlay(track: track)
+
+        XCTAssertFalse(engine.isReversed)
+        engine.toggleReverse()
+        XCTAssertTrue(engine.isReversed)
+        XCTAssertEqual(engine.playbackState, .playing)
+
+        engine.toggleReverse()
+        XCTAssertFalse(engine.isReversed)
+
+        engine.stop()
+    }
 }
+

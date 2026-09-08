@@ -9,6 +9,9 @@ public struct StereoWaveformView: View {
     @State private var isDragging: Bool = false
     @State private var scrubFraction: Double? = nil
     @State private var lastSeekTimestamp: TimeInterval = 0
+    @State private var dragStartFraction: Double? = nil
+    @State private var dragCurrentFraction: Double? = nil
+    @State private var isSelectingLoop: Bool = false
 
     public init(
         audioEngine: AudioEngineController,
@@ -154,13 +157,28 @@ public struct StereoWaveformView: View {
                 }
 
                 // Hover guide line
-                if let hoverX = hoverFraction {
+                if let hoverX = hoverFraction, !isSelectingLoop {
                     let posX = hoverX * width
                     Path { p in
                         p.move(to: CGPoint(x: posX, y: 0))
                         p.addLine(to: CGPoint(x: posX, y: height))
                     }
                     .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                }
+
+                // Render Active Loop Selection or In-Progress Drag Selection
+                if isSelectingLoop, let startF = dragStartFraction, let currF = dragCurrentFraction {
+                    let minF = min(startF, currF)
+                    let maxF = max(startF, currF)
+                    let startX = minF * width
+                    let endX = maxF * width
+                    loopOverlayView(startX: startX, endX: endX, height: height, minF: minF, maxF: maxF, isLiveDrag: true)
+                } else if let range = audioEngine.loopRange, audioEngine.duration > 0 {
+                    let minF = range.lowerBound / audioEngine.duration
+                    let maxF = range.upperBound / audioEngine.duration
+                    let startX = minF * width
+                    let endX = maxF * width
+                    loopOverlayView(startX: startX, endX: endX, height: height, minF: minF, maxF: maxF, isLiveDrag: false)
                 }
 
                 // Playhead (Orange vertical line & timestamp badge)
@@ -198,19 +216,48 @@ public struct StereoWaveformView: View {
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         isDragging = true
-                        let fraction = min(max(0, value.location.x / width), 1.0)
-                        scrubFraction = fraction
+                        let currentFrac = min(max(0, value.location.x / width), 1.0)
+                        let startFrac = min(max(0, value.startLocation.x / width), 1.0)
+                        dragStartFraction = startFrac
+                        dragCurrentFraction = currentFrac
 
-                        // Throttle audio seek during dragging to 15 Hz to keep audio engine responsive
-                        let now = ProcessInfo.processInfo.systemUptime
-                        if now - lastSeekTimestamp > 0.065 {
-                            lastSeekTimestamp = now
-                            audioEngine.seek(to: fraction * audioEngine.duration)
+                        let delta = abs(currentFrac - startFrac)
+                        if delta > 0.015 {
+                            // Dragging to create a loop section
+                            isSelectingLoop = true
+                            scrubFraction = nil
+                        } else {
+                            // Scrubbing
+                            isSelectingLoop = false
+                            scrubFraction = currentFrac
+                            let now = ProcessInfo.processInfo.systemUptime
+                            if now - lastSeekTimestamp > 0.065 {
+                                lastSeekTimestamp = now
+                                audioEngine.seek(to: currentFrac * audioEngine.duration)
+                            }
                         }
                     }
                     .onEnded { value in
-                        let fraction = min(max(0, value.location.x / width), 1.0)
-                        audioEngine.seek(to: fraction * audioEngine.duration)
+                        let currentFrac = min(max(0, value.location.x / width), 1.0)
+                        let startFrac = min(max(0, value.startLocation.x / width), 1.0)
+                        let delta = abs(currentFrac - startFrac)
+
+                        if delta > 0.015 && audioEngine.duration > 0 {
+                            // Set loop section and immediately loop!
+                            let minFrac = min(startFrac, currentFrac)
+                            let maxFrac = max(startFrac, currentFrac)
+                            let loopStart = minFrac * audioEngine.duration
+                            let loopEnd = maxFrac * audioEngine.duration
+                            audioEngine.setLoopRange(loopStart...loopEnd)
+                        } else {
+                            // Single click: clear active loop and seek
+                            audioEngine.clearLoop()
+                            audioEngine.seek(to: currentFrac * audioEngine.duration)
+                        }
+
+                        dragStartFraction = nil
+                        dragCurrentFraction = nil
+                        isSelectingLoop = false
                         scrubFraction = nil
                         isDragging = false
                     }
@@ -223,6 +270,60 @@ public struct StereoWaveformView: View {
                     hoverFraction = nil
                 }
             }
+        }
+    }
+
+    @ViewBuilder
+    private func loopOverlayView(
+        startX: CGFloat,
+        endX: CGFloat,
+        height: CGFloat,
+        minF: Double,
+        maxF: Double,
+        isLiveDrag: Bool
+    ) -> some View {
+        let loopWidth = max(2, endX - startX)
+        let centerX = startX + loopWidth / 2.0
+        let color = Color(red: 1.0, green: 0.55, blue: 0.1)
+
+        // Shaded loop region
+        Rectangle()
+            .fill(color.opacity(isLiveDrag ? 0.28 : 0.18))
+            .frame(width: loopWidth, height: height)
+            .position(x: centerX, y: height / 2.0)
+
+        // Left boundary line
+        Rectangle()
+            .fill(color)
+            .frame(width: 2, height: height)
+            .position(x: startX, y: height / 2.0)
+
+        // Right boundary line
+        Rectangle()
+            .fill(color)
+            .frame(width: 2, height: height)
+            .position(x: endX, y: height / 2.0)
+
+        // Left timestamp badge
+        if audioEngine.duration > 0 {
+            let leftTime = formatTime(minF * audioEngine.duration)
+            Text(leftTime)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1.5)
+                .background(RoundedRectangle(cornerRadius: 2).fill(color))
+                .position(x: min(max(24, startX), endX - 20), y: 12)
+
+            // Right timestamp badge
+            let rightTime = formatTime(maxF * audioEngine.duration)
+            Text(rightTime)
+                .font(.system(size: 9, weight: .bold, design: .monospaced))
+                .foregroundColor(.black)
+                .padding(.horizontal, 3)
+                .padding(.vertical, 1.5)
+                .background(RoundedRectangle(cornerRadius: 2).fill(color))
+                .position(x: max(startX + 20, endX), y: 12)
         }
     }
 

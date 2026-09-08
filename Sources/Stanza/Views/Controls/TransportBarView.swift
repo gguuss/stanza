@@ -48,6 +48,14 @@ public struct TransportBarView: View {
                 .buttonStyle(TransportButtonStyle())
                 .help("Stop Playback")
 
+                // Reverse Playback button
+                Button(action: { audioEngine.toggleReverse() }) {
+                    Image(systemName: "arrow.uturn.backward")
+                        .font(.system(size: 13, weight: audioEngine.isReversed ? .bold : .regular))
+                }
+                .buttonStyle(TransportButtonStyle(isActive: audioEngine.isReversed))
+                .help("Reverse Playback (Play Audio Backwards) (Cmd+R)")
+
                 Button(action: onNext) {
                     Image(systemName: "forward.end.fill")
                         .font(.system(size: 13))
@@ -75,6 +83,45 @@ public struct TransportBarView: View {
             }
             .buttonStyle(.plain)
             .help("Toggle Loop Mode: Off / Repeat One / Repeat All")
+
+            // Continuous Playback button
+            Button(action: { audioEngine.toggleContinuousPlayback() }) {
+                HStack(spacing: 3) {
+                    Image(systemName: audioEngine.isContinuousPlayback ? "arrow.right.to.line.compact" : "stop.circle")
+                        .font(.system(size: 11))
+                    Text(audioEngine.isContinuousPlayback ? "CONT" : "SINGLE")
+                        .font(.system(size: 9, weight: .bold))
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 4)
+                .background(audioEngine.isContinuousPlayback ? Color.white.opacity(0.06) : Color.orange.opacity(0.3))
+                .foregroundColor(audioEngine.isContinuousPlayback ? Color.white.opacity(0.8) : Color.orange)
+                .cornerRadius(4)
+            }
+            .buttonStyle(.plain)
+            .help("Continuous Playback: \(audioEngine.isContinuousPlayback ? "On (Advance to next file)" : "Off (Stop after current file)")")
+
+            // Active Loop Range badge
+            if let loop = audioEngine.loopRange {
+                HStack(spacing: 4) {
+                    Image(systemName: "repeat")
+                        .font(.system(size: 10, weight: .bold))
+                    Text(formatLoopRange(loop))
+                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    Button(action: { audioEngine.clearLoop() }) {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.white.opacity(0.7))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Clear section loop")
+                }
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .background(Color.orange.opacity(0.25))
+                .foregroundColor(.orange)
+                .cornerRadius(4)
+            }
 
             // Time Display (Click to toggle remaining / elapsed)
             Button(action: { showRemainingTime.toggle() }) {
@@ -205,19 +252,38 @@ public struct TransportBarView: View {
             return String(format: "%d:%02d.%d", m, s, t)
         }
     }
+
+    private func formatLoopRange(_ range: ClosedRange<TimeInterval>) -> String {
+        let sMin = Int(range.lowerBound) / 60
+        let sSec = Int(range.lowerBound) % 60
+        let sT = Int((range.lowerBound.truncatingRemainder(dividingBy: 1)) * 10)
+        let eMin = Int(range.upperBound) / 60
+        let eSec = Int(range.upperBound) % 60
+        let eT = Int((range.upperBound.truncatingRemainder(dividingBy: 1)) * 10)
+        return String(format: "%d:%02d.%d - %d:%02d.%d", sMin, sSec, sT, eMin, eSec, eT)
+    }
 }
 
 public struct TransportButtonStyle: ButtonStyle {
     var isProminent: Bool = false
+    var isActive: Bool = false
 
     public func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .foregroundColor(isProminent ? Color(red: 1.0, green: 0.45, blue: 0.15) : Color.white.opacity(0.85))
+            .foregroundColor(
+                isActive ? Color.orange :
+                (isProminent ? Color(red: 1.0, green: 0.45, blue: 0.15) : Color.white.opacity(0.85))
+            )
             .frame(width: 28, height: 28)
             .background(
                 RoundedRectangle(cornerRadius: 5)
-                    .fill(configuration.isPressed ? Color.white.opacity(0.2) : (isProminent ? Color.white.opacity(0.12) : Color.white.opacity(0.06)))
+                    .fill(
+                        configuration.isPressed
+                            ? Color.white.opacity(0.2)
+                            : (isActive ? Color.orange.opacity(0.25) : (isProminent ? Color.white.opacity(0.12) : Color.white.opacity(0.06)))
+                    )
             )
             .scaleEffect(configuration.isPressed ? 0.95 : 1.0)
     }
 }
+
