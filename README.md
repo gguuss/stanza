@@ -1,6 +1,6 @@
 # Stanza
 
-A minimalist, high-performance native macOS media player built in Swift and SwiftUI, featuring real-time audio visualization, split-stereo channel analysis, and seamless file queue management inspired by audio engineering players like Resonic.
+A minimalist, high-performance native macOS media player built in Swift and SwiftUI, featuring real-time audio visualization, split-stereo channel analysis, and seamless file queue management inspired by audio engineering players like Resonic. I'm only creating this out of a love for Resonic, and this will only be released for Mac and will never be as powerful and efficient as its inspiration because Vibes. If you have a PC and need an amazing media player, [buy Resonic](https://resonic.at/purchase), it's perfect!
 
 ![Stanza User Interface](docs/images/stanza_ui.png)
 
