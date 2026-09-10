@@ -66,6 +66,14 @@ else
     codesign --force --sign - "$OUTPUT_DMG"
 fi
 
+# 6. Create ZIP archive
+OUTPUT_ZIP="$DIR/build/Stanza-${VERSION}.zip"
+echo "==> Creating $OUTPUT_ZIP archive..."
+rm -f "$OUTPUT_ZIP"
+(cd "$DIR/build" && zip -r -y "Stanza-${VERSION}.zip" "Stanza.app")
+
 echo "==> Successfully created DMG installer at: $OUTPUT_DMG"
+echo "==> Successfully created ZIP archive at: $OUTPUT_ZIP"
+
 
 
