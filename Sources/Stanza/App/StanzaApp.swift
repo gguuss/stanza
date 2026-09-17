@@ -177,6 +177,22 @@ struct StanzaApp: App {
                     appState.visualizerMode = .stereoSpectrum
                 }
                 .keyboardShortcut("3", modifiers: .command)
+
+                Divider()
+
+                Menu("Waveform Color Scheme") {
+                    ForEach(WaveformColorScheme.allCases) { scheme in
+                        Button(action: {
+                            appState.waveformColorScheme = scheme
+                        }) {
+                            if appState.waveformColorScheme == scheme {
+                                Text("✓  \(scheme.rawValue)")
+                            } else {
+                                Text("    \(scheme.rawValue)")
+                            }
+                        }
+                    }
+                }
             }
 
             // View Menu

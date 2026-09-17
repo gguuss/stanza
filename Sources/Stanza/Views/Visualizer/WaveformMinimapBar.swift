@@ -45,52 +45,85 @@ public struct WaveformMinimapBar: View {
 
                     let leftPeaks = waveformData.left
                     let rightPeaks = waveformData.right
+                    let freqs = waveformData.frequencies
+                    let scheme = appState.waveformColorScheme
                     let waveColor = Color(red: 0.40, green: 0.46, blue: 0.54).opacity(0.7)
 
-                    // Draw Left Channel (top half)
-                    var leftPath = Path()
-                    for i in 0..<points {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
-                        let maxVal = CGFloat(leftPeaks.maxPeaks[i])
-                        let y = quarter - (maxVal * quarter * 0.9)
-                        if i == 0 {
-                            leftPath.move(to: CGPoint(x: x, y: quarter))
-                            leftPath.addLine(to: CGPoint(x: x, y: y))
-                        } else {
+                    if scheme == .classic {
+                        // Draw Left Channel (top half)
+                        var leftPath = Path()
+                        for i in 0..<points {
+                            let x = (CGFloat(i) / CGFloat(points)) * w
+                            let maxVal = CGFloat(leftPeaks.maxPeaks[i])
+                            let y = quarter - (maxVal * quarter * 0.9)
+                            if i == 0 {
+                                leftPath.move(to: CGPoint(x: x, y: quarter))
+                                leftPath.addLine(to: CGPoint(x: x, y: y))
+                            } else {
+                                leftPath.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        for i in (0..<points).reversed() {
+                            let x = (CGFloat(i) / CGFloat(points)) * w
+                            let minVal = CGFloat(leftPeaks.minPeaks[i])
+                            let y = quarter - (minVal * quarter * 0.9)
                             leftPath.addLine(to: CGPoint(x: x, y: y))
                         }
-                    }
-                    for i in (0..<points).reversed() {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
-                        let minVal = CGFloat(leftPeaks.minPeaks[i])
-                        let y = quarter - (minVal * quarter * 0.9)
-                        leftPath.addLine(to: CGPoint(x: x, y: y))
-                    }
-                    leftPath.closeSubpath()
-                    context.fill(leftPath, with: .color(waveColor))
+                        leftPath.closeSubpath()
+                        context.fill(leftPath, with: .color(waveColor))
 
-                    // Draw Right Channel (bottom half)
-                    var rightPath = Path()
-                    let rightCenter = half + quarter
-                    for i in 0..<points {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
-                        let maxVal = CGFloat(rightPeaks.maxPeaks[i])
-                        let y = rightCenter - (maxVal * quarter * 0.9)
-                        if i == 0 {
-                            rightPath.move(to: CGPoint(x: x, y: rightCenter))
-                            rightPath.addLine(to: CGPoint(x: x, y: y))
-                        } else {
+                        // Draw Right Channel (bottom half)
+                        var rightPath = Path()
+                        let rightCenter = half + quarter
+                        for i in 0..<points {
+                            let x = (CGFloat(i) / CGFloat(points)) * w
+                            let maxVal = CGFloat(rightPeaks.maxPeaks[i])
+                            let y = rightCenter - (maxVal * quarter * 0.9)
+                            if i == 0 {
+                                rightPath.move(to: CGPoint(x: x, y: rightCenter))
+                                rightPath.addLine(to: CGPoint(x: x, y: y))
+                            } else {
+                                rightPath.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        for i in (0..<points).reversed() {
+                            let x = (CGFloat(i) / CGFloat(points)) * w
+                            let minVal = CGFloat(rightPeaks.minPeaks[i])
+                            let y = rightCenter - (minVal * quarter * 0.9)
                             rightPath.addLine(to: CGPoint(x: x, y: y))
                         }
+                        rightPath.closeSubpath()
+                        context.fill(rightPath, with: .color(waveColor))
+                    } else {
+                        // Draw frequency-colored slices across minimap
+                        let rightCenter = half + quarter
+                        for i in 0..<points {
+                            let x = (CGFloat(i) / CGFloat(points)) * w
+                            let nextX = (CGFloat(i + 1) / CGFloat(points)) * w
+                            let sliceW = max(1.0, nextX - x)
+
+                            let freq = freqs.indices.contains(i) ? freqs[i] : 0.5
+                            let sliceColor = scheme.color(for: freq).opacity(0.85)
+
+                            let leftMax = CGFloat(leftPeaks.maxPeaks[i])
+                            let leftMin = CGFloat(leftPeaks.minPeaks[i])
+                            let topL = quarter - (leftMax * quarter * 0.9)
+                            let bottomL = quarter - (leftMin * quarter * 0.9)
+                            context.fill(
+                                Path(CGRect(x: x, y: topL, width: sliceW, height: max(1.0, bottomL - topL))),
+                                with: .color(sliceColor)
+                            )
+
+                            let rightMax = CGFloat(rightPeaks.maxPeaks[i])
+                            let rightMin = CGFloat(rightPeaks.minPeaks[i])
+                            let topR = rightCenter - (rightMax * quarter * 0.9)
+                            let bottomR = rightCenter - (rightMin * quarter * 0.9)
+                            context.fill(
+                                Path(CGRect(x: x, y: topR, width: sliceW, height: max(1.0, bottomR - topR))),
+                                with: .color(sliceColor)
+                            )
+                        }
                     }
-                    for i in (0..<points).reversed() {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
-                        let minVal = CGFloat(rightPeaks.minPeaks[i])
-                        let y = rightCenter - (minVal * quarter * 0.9)
-                        rightPath.addLine(to: CGPoint(x: x, y: y))
-                    }
-                    rightPath.closeSubpath()
-                    context.fill(rightPath, with: .color(waveColor))
                 }
 
                 // Active Loop Range Overlay on Minimap

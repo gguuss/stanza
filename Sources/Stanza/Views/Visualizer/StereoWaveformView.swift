@@ -94,12 +94,15 @@ public struct StereoWaveformView: View {
                     let h = size.height
                     let half = h / 2.0
                     let quarter = half / 2.0
+                    let rightCenter = half + quarter
 
                     let points = waveformData.samplePoints
                     guard points > 0 else { return }
 
                     let leftPeaks = waveformData.left
                     let rightPeaks = waveformData.right
+                    let freqs = waveformData.frequencies
+                    let scheme = appState.waveformColorScheme
                     let waveColor = Color(red: 0.52, green: 0.58, blue: 0.65)
 
                     // Calculate index slice corresponding to current viewport
@@ -107,58 +110,95 @@ public struct StereoWaveformView: View {
                     let endIndex = min(points, Int(Double(points) * (offset + visibleFraction)) + 2)
                     guard startIndex < endIndex else { return }
 
-                    // Draw Left Channel (Top half)
-                    var leftPath = Path()
-                    var isFirst = true
-                    for i in startIndex..<endIndex {
-                        let frac = Double(i) / Double(points)
-                        let x = CGFloat((frac - offset) / visibleFraction) * w
-                        let maxVal = CGFloat(leftPeaks.maxPeaks[i])
-                        let y = quarter - (maxVal * quarter * 0.95)
-                        if isFirst {
-                            leftPath.move(to: CGPoint(x: x, y: quarter))
-                            leftPath.addLine(to: CGPoint(x: x, y: y))
-                            isFirst = false
-                        } else {
+                    if scheme == .classic {
+                        // Draw Left Channel (Top half)
+                        var leftPath = Path()
+                        var isFirst = true
+                        for i in startIndex..<endIndex {
+                            let frac = Double(i) / Double(points)
+                            let x = CGFloat((frac - offset) / visibleFraction) * w
+                            let maxVal = CGFloat(leftPeaks.maxPeaks[i])
+                            let y = quarter - (maxVal * quarter * 0.95)
+                            if isFirst {
+                                leftPath.move(to: CGPoint(x: x, y: quarter))
+                                leftPath.addLine(to: CGPoint(x: x, y: y))
+                                isFirst = false
+                            } else {
+                                leftPath.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        for i in (startIndex..<endIndex).reversed() {
+                            let frac = Double(i) / Double(points)
+                            let x = CGFloat((frac - offset) / visibleFraction) * w
+                            let minVal = CGFloat(leftPeaks.minPeaks[i])
+                            let y = quarter - (minVal * quarter * 0.95)
                             leftPath.addLine(to: CGPoint(x: x, y: y))
                         }
-                    }
-                    for i in (startIndex..<endIndex).reversed() {
-                        let frac = Double(i) / Double(points)
-                        let x = CGFloat((frac - offset) / visibleFraction) * w
-                        let minVal = CGFloat(leftPeaks.minPeaks[i])
-                        let y = quarter - (minVal * quarter * 0.95)
-                        leftPath.addLine(to: CGPoint(x: x, y: y))
-                    }
-                    leftPath.closeSubpath()
-                    context.fill(leftPath, with: .color(waveColor))
+                        leftPath.closeSubpath()
+                        context.fill(leftPath, with: .color(waveColor))
 
-                    // Draw Right Channel (Bottom half)
-                    var rightPath = Path()
-                    let rightCenter = half + quarter
-                    isFirst = true
-                    for i in startIndex..<endIndex {
-                        let frac = Double(i) / Double(points)
-                        let x = CGFloat((frac - offset) / visibleFraction) * w
-                        let maxVal = CGFloat(rightPeaks.maxPeaks[i])
-                        let y = rightCenter - (maxVal * quarter * 0.95)
-                        if isFirst {
-                            rightPath.move(to: CGPoint(x: x, y: rightCenter))
-                            rightPath.addLine(to: CGPoint(x: x, y: y))
-                            isFirst = false
-                        } else {
+                        // Draw Right Channel (Bottom half)
+                        var rightPath = Path()
+                        let rightCenter = half + quarter
+                        isFirst = true
+                        for i in startIndex..<endIndex {
+                            let frac = Double(i) / Double(points)
+                            let x = CGFloat((frac - offset) / visibleFraction) * w
+                            let maxVal = CGFloat(rightPeaks.maxPeaks[i])
+                            let y = rightCenter - (maxVal * quarter * 0.95)
+                            if isFirst {
+                                rightPath.move(to: CGPoint(x: x, y: rightCenter))
+                                rightPath.addLine(to: CGPoint(x: x, y: y))
+                                isFirst = false
+                            } else {
+                                rightPath.addLine(to: CGPoint(x: x, y: y))
+                            }
+                        }
+                        for i in (startIndex..<endIndex).reversed() {
+                            let frac = Double(i) / Double(points)
+                            let x = CGFloat((frac - offset) / visibleFraction) * w
+                            let minVal = CGFloat(rightPeaks.minPeaks[i])
+                            let y = rightCenter - (minVal * quarter * 0.95)
                             rightPath.addLine(to: CGPoint(x: x, y: y))
                         }
+                        rightPath.closeSubpath()
+                        context.fill(rightPath, with: .color(waveColor))
+                    } else {
+                        // Render Frequency-Colored Gradient Waveform Slices
+                        let rightCenter = half + quarter
+                        for i in startIndex..<endIndex {
+                            let frac = Double(i) / Double(points)
+                            let x = CGFloat((frac - offset) / visibleFraction) * w
+                            let nextFrac = Double(i + 1) / Double(points)
+                            let nextX = CGFloat((nextFrac - offset) / visibleFraction) * w
+                            let sliceWidth = max(1.0, nextX - x)
+
+                            let freq = freqs.indices.contains(i) ? freqs[i] : 0.5
+                            let sliceColor = scheme.color(for: freq)
+
+                            // Left Channel slice (Top half)
+                            let leftMax = CGFloat(leftPeaks.maxPeaks[i])
+                            let leftMin = CGFloat(leftPeaks.minPeaks[i])
+                            let leftTop = quarter - (leftMax * quarter * 0.95)
+                            let leftBottom = quarter - (leftMin * quarter * 0.95)
+                            let leftHeight = max(1.0, leftBottom - leftTop)
+                            context.fill(
+                                Path(CGRect(x: x, y: leftTop, width: sliceWidth, height: leftHeight)),
+                                with: .color(sliceColor)
+                            )
+
+                            // Right Channel slice (Bottom half)
+                            let rightMax = CGFloat(rightPeaks.maxPeaks[i])
+                            let rightMin = CGFloat(rightPeaks.minPeaks[i])
+                            let rightTop = rightCenter - (rightMax * quarter * 0.95)
+                            let rightBottom = rightCenter - (rightMin * quarter * 0.95)
+                            let rightHeight = max(1.0, rightBottom - rightTop)
+                            context.fill(
+                                Path(CGRect(x: x, y: rightTop, width: sliceWidth, height: rightHeight)),
+                                with: .color(sliceColor)
+                            )
+                        }
                     }
-                    for i in (startIndex..<endIndex).reversed() {
-                        let frac = Double(i) / Double(points)
-                        let x = CGFloat((frac - offset) / visibleFraction) * w
-                        let minVal = CGFloat(rightPeaks.minPeaks[i])
-                        let y = rightCenter - (minVal * quarter * 0.95)
-                        rightPath.addLine(to: CGPoint(x: x, y: y))
-                    }
-                    rightPath.closeSubpath()
-                    context.fill(rightPath, with: .color(waveColor))
 
                     // Reference zero-lines
                     let lineLeft = Path { p in

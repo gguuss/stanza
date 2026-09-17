@@ -20,7 +20,8 @@ final class StanzaTests: XCTestCase {
             AppState.userDefaultsLastOpenedFolderKey,
             AppState.userDefaultsLastSelectedTrackKey,
             AppState.userDefaultsVisualizerModeKey,
-            AppState.userDefaultsLeftPaneOrientationKey
+            AppState.userDefaultsLeftPaneOrientationKey,
+            AppState.userDefaultsWaveformColorSchemeKey
         ]
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
@@ -86,6 +87,7 @@ final class StanzaTests: XCTestCase {
         XCTAssertEqual(empty.samplePoints, 0)
         XCTAssertEqual(empty.left.minPeaks.count, 0)
         XCTAssertEqual(empty.left.maxPeaks.count, 0)
+        XCTAssertEqual(empty.frequencies.count, 0)
         XCTAssertEqual(empty.duration, 0)
     }
 
@@ -424,6 +426,9 @@ final class StanzaTests: XCTestCase {
         appState.leftPaneOrientation = .vertical
         XCTAssertEqual(UserDefaults.standard.string(forKey: AppState.userDefaultsLeftPaneOrientationKey), LeftPaneOrientation.vertical.rawValue)
 
+        appState.waveformColorScheme = .purpleMagenta
+        XCTAssertEqual(UserDefaults.standard.string(forKey: AppState.userDefaultsWaveformColorSchemeKey), WaveformColorScheme.purpleMagenta.rawValue)
+
         // 3. Verify volatile states remain default/transient (not persisted)
         XCTAssertFalse(appState.isRecursiveScan)
         XCTAssertFalse(engine.isReversed)
@@ -632,7 +637,75 @@ final class StanzaTests: XCTestCase {
         XCTAssertEqual(waveform.left.maxPeaks.count, 2400)
         XCTAssertEqual(waveform.right.minPeaks.count, 2400)
         XCTAssertEqual(waveform.right.maxPeaks.count, 2400)
+        XCTAssertEqual(waveform.frequencies.count, 2400)
         XCTAssertGreaterThan(waveform.duration, 1.9)
+    }
+
+    @MainActor
+    func testWaveformColorSchemesAndFrequencyGradient() async throws {
+        // 1. Verify all color schemes exist and have correct titles
+        XCTAssertEqual(WaveformColorScheme.allCases.count, 4)
+        let schemes: [WaveformColorScheme] = [.classic, .purpleMagenta, .blueViolet, .amberLightBlue]
+        for scheme in schemes {
+            XCTAssertFalse(scheme.shortTitle.isEmpty)
+        }
+
+        // 2. Verify gradient interpolation gives different colors at opposite frequency ends
+        for scheme in [WaveformColorScheme.purpleMagenta, .blueViolet, .amberLightBlue] {
+            let lowColor = scheme.color(for: 0.0)
+            let highColor = scheme.color(for: 1.0)
+            XCTAssertNotEqual(lowColor, highColor)
+        }
+
+        // 3. Test frequency extraction with low-frequency vs high-frequency synthetic audio
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sampleRate: Double = 44100
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+
+        // Generate Low Frequency audio (100 Hz bass sine wave)
+        let lowWavURL = tempDir.appendingPathComponent("low_bass.wav")
+        do {
+            let lowFrames: AVAudioFrameCount = 44100
+            let lowBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: lowFrames)!
+            lowBuffer.frameLength = lowFrames
+            for i in 0..<Int(lowFrames) {
+                let s = Float(sin(2.0 * .pi * 100.0 * Double(i) / sampleRate) * 0.8)
+                lowBuffer.floatChannelData?[0][i] = s
+                lowBuffer.floatChannelData?[1][i] = s
+            }
+            let lowFile = try AVAudioFile(forWriting: lowWavURL, settings: format.settings)
+            try lowFile.write(from: lowBuffer)
+        }
+
+        // Generate High Frequency audio (8000 Hz treble sine wave)
+        let highWavURL = tempDir.appendingPathComponent("high_treble.wav")
+        do {
+            let highFrames: AVAudioFrameCount = 44100
+            let highBuffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: highFrames)!
+            highBuffer.frameLength = highFrames
+            for i in 0..<Int(highFrames) {
+                let s = Float(sin(2.0 * .pi * 8000.0 * Double(i) / sampleRate) * 0.8)
+                highBuffer.floatChannelData?[0][i] = s
+                highBuffer.floatChannelData?[1][i] = s
+            }
+            let highFile = try AVAudioFile(forWriting: highWavURL, settings: format.settings)
+            try highFile.write(from: highBuffer)
+        }
+
+        let lowWaveform = await WaveformExtractor.shared.extractWaveform(from: lowWavURL, targetPoints: 100)
+        let highWaveform = await WaveformExtractor.shared.extractWaveform(from: highWavURL, targetPoints: 100)
+
+        // Compare average extracted frequency
+        let lowAvgFreq = lowWaveform.frequencies.reduce(0, +) / Float(max(1, lowWaveform.frequencies.count))
+        let highAvgFreq = highWaveform.frequencies.reduce(0, +) / Float(max(1, highWaveform.frequencies.count))
+
+        // High frequency audio must have a distinctly higher frequency metric than low frequency audio
+        XCTAssertGreaterThan(highAvgFreq, lowAvgFreq)
+        XCTAssertLessThan(lowAvgFreq, 0.4)
+        XCTAssertGreaterThan(highAvgFreq, 0.6)
     }
 }
 

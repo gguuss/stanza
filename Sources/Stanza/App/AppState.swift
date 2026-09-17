@@ -14,6 +14,7 @@ public final class AppState: ObservableObject {
     public static let userDefaultsLastSelectedTrackKey = "stanza.lastSelectedTrackURL"
     public static let userDefaultsVisualizerModeKey = "stanza.visualizerMode"
     public static let userDefaultsLeftPaneOrientationKey = "stanza.leftPaneOrientation"
+    public static let userDefaultsWaveformColorSchemeKey = "stanza.waveformColorScheme"
 
     public static var isOptionKeyPressed: Bool {
         if let event = NSApplication.shared.currentEvent {
@@ -50,6 +51,11 @@ public final class AppState: ObservableObject {
     @Published public var visualizerMode: VisualizerMode = .stereoWaveform {
         didSet {
             UserDefaults.standard.set(visualizerMode.rawValue, forKey: Self.userDefaultsVisualizerModeKey)
+        }
+    }
+    @Published public var waveformColorScheme: WaveformColorScheme = .classic {
+        didSet {
+            UserDefaults.standard.set(waveformColorScheme.rawValue, forKey: Self.userDefaultsWaveformColorSchemeKey)
         }
     }
     @Published public var isLoadingTracks: Bool = false
@@ -92,6 +98,10 @@ public final class AppState: ObservableObject {
         if let orientStr = UserDefaults.standard.string(forKey: Self.userDefaultsLeftPaneOrientationKey),
            let orient = LeftPaneOrientation(rawValue: orientStr) {
             self.leftPaneOrientation = orient
+        }
+        if let schemeStr = UserDefaults.standard.string(forKey: Self.userDefaultsWaveformColorSchemeKey),
+           let scheme = WaveformColorScheme(rawValue: schemeStr) {
+            self.waveformColorScheme = scheme
         }
 
         setupQuickAccess()
