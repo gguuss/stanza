@@ -20,8 +20,7 @@ final class StanzaTests: XCTestCase {
             AppState.userDefaultsLastOpenedFolderKey,
             AppState.userDefaultsLastSelectedTrackKey,
             AppState.userDefaultsVisualizerModeKey,
-            AppState.userDefaultsLeftPaneOrientationKey,
-            AppState.userDefaultsIsRecursiveScanKey
+            AppState.userDefaultsLeftPaneOrientationKey
         ]
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
@@ -425,10 +424,8 @@ final class StanzaTests: XCTestCase {
         appState.leftPaneOrientation = .vertical
         XCTAssertEqual(UserDefaults.standard.string(forKey: AppState.userDefaultsLeftPaneOrientationKey), LeftPaneOrientation.vertical.rawValue)
 
-        appState.isRecursiveScan = true
-        XCTAssertEqual(UserDefaults.standard.bool(forKey: AppState.userDefaultsIsRecursiveScanKey), true)
-
-        // 3. Verify volatile states remain default/transient
+        // 3. Verify volatile states remain default/transient (not persisted)
+        XCTAssertFalse(appState.isRecursiveScan)
         XCTAssertFalse(engine.isReversed)
         XCTAssertNil(engine.loopRange)
         XCTAssertFalse(engine.isDimmed)
@@ -509,7 +506,7 @@ final class StanzaTests: XCTestCase {
         XCTAssertTrue(paths.contains("Sub1/Deep/track2.wav"))
         XCTAssertTrue(paths.contains("Sub2/track3.flac"))
 
-        // 3. Navigation with recursive mode
+        // 3. Navigation with recursive mode (Alt/Option click)
         appState.navigateToFolder(root, recursive: true)
         XCTAssertTrue(appState.isRecursiveScan)
         XCTAssertEqual(appState.queue.count, 4)
@@ -519,7 +516,17 @@ final class StanzaTests: XCTestCase {
         let trackDeep = appState.queue.first(where: { $0.filename == "track2.wav" })
         XCTAssertEqual(trackDeep?.relativePath, "Sub1/Deep/track2.wav")
 
-        // 4. Toggle recursive scan off
+        // 4. Default navigation (normal click without Alt/Option) resets to non-recursive flat scan
+        appState.navigateToFolder(root)
+        XCTAssertFalse(appState.isRecursiveScan)
+        XCTAssertEqual(appState.queue.count, 1)
+        XCTAssertEqual(appState.queue.first?.filename, "track0.mp3")
+
+        // 5. Toggle recursive scan on and off
+        appState.toggleRecursiveScan()
+        XCTAssertTrue(appState.isRecursiveScan)
+        XCTAssertEqual(appState.queue.count, 4)
+
         appState.toggleRecursiveScan()
         XCTAssertFalse(appState.isRecursiveScan)
         XCTAssertEqual(appState.queue.count, 1)

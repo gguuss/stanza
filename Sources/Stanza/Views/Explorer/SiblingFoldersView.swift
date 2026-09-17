@@ -22,7 +22,11 @@ public struct SiblingFoldersView: View {
                 Spacer()
 
                 // Navigate Up to Parent Button
-                Button(action: { appState.navigateUpToParent() }) {
+                Button(action: {
+                    if let parent = appState.parentFolderURL {
+                        appState.navigateToFolder(parent, recursive: AppState.isOptionKeyPressed)
+                    }
+                }) {
                     HStack(spacing: 3) {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 10, weight: .bold))
@@ -48,8 +52,7 @@ public struct SiblingFoldersView: View {
             // Parent Folder Banner
             if let parent = appState.parentFolderURL {
                 Button(action: {
-                    let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-                    appState.navigateToFolder(parent, recursive: isOptionPressed ? true : nil)
+                    appState.navigateToFolder(parent, recursive: AppState.isOptionKeyPressed)
                 }) {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.turn.left.up")
@@ -118,8 +121,7 @@ public struct SiblingFoldersView: View {
                             let isCurrent = item.url.path == appState.currentFolderURL?.path
 
                             Button(action: {
-                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-                                appState.navigateToFolder(item.url, recursive: isOptionPressed ? true : nil)
+                                appState.navigateToFolder(item.url, recursive: AppState.isOptionKeyPressed)
                             }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: isCurrent ? "speaker.wave.2.fill" : "folder")
@@ -190,8 +192,7 @@ public struct SiblingFoldersView: View {
 
                         ForEach(appState.childFolders) { item in
                             Button(action: {
-                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-                                appState.navigateToFolder(item.url, recursive: isOptionPressed ? true : nil)
+                                appState.navigateToFolder(item.url, recursive: AppState.isOptionKeyPressed)
                             }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "folder")

@@ -14,7 +14,13 @@ public final class AppState: ObservableObject {
     public static let userDefaultsLastSelectedTrackKey = "stanza.lastSelectedTrackURL"
     public static let userDefaultsVisualizerModeKey = "stanza.visualizerMode"
     public static let userDefaultsLeftPaneOrientationKey = "stanza.leftPaneOrientation"
-    public static let userDefaultsIsRecursiveScanKey = "stanza.isRecursiveScan"
+
+    public static var isOptionKeyPressed: Bool {
+        if let event = NSApplication.shared.currentEvent {
+            return event.modifierFlags.contains(.option)
+        }
+        return NSEvent.modifierFlags.contains(.option)
+    }
 
     // Current folder being explored
     @Published public var currentFolderURL: URL?
@@ -30,11 +36,7 @@ public final class AppState: ObservableObject {
         }
     }
     @Published public var expandedFolderURLs: Set<String> = []
-    @Published public var isRecursiveScan: Bool = false {
-        didSet {
-            UserDefaults.standard.set(isRecursiveScan, forKey: Self.userDefaultsIsRecursiveScanKey)
-        }
-    }
+    @Published public var isRecursiveScan: Bool = false
 
     // Playable tracks in the current folder
     @Published public var queue: [AudioTrack] = []
@@ -91,9 +93,6 @@ public final class AppState: ObservableObject {
            let orient = LeftPaneOrientation(rawValue: orientStr) {
             self.leftPaneOrientation = orient
         }
-        if UserDefaults.standard.object(forKey: Self.userDefaultsIsRecursiveScanKey) != nil {
-            self.isRecursiveScan = UserDefaults.standard.bool(forKey: Self.userDefaultsIsRecursiveScanKey)
-        }
 
         setupQuickAccess()
     }
@@ -148,7 +147,7 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public func navigateToFolder(_ folderURL: URL, selectTrackURL: URL? = nil, autoPlay: Bool = false, recursive: Bool? = nil) {
+    public func navigateToFolder(_ folderURL: URL, selectTrackURL: URL? = nil, autoPlay: Bool = false, recursive: Bool = false) {
         let standardURL = folderURL.resolvingSymlinksInPath().standardizedFileURL
         _ = standardURL.startAccessingSecurityScopedResource()
 
@@ -158,9 +157,7 @@ public final class AppState: ObservableObject {
             return
         }
 
-        if let rec = recursive {
-            self.isRecursiveScan = rec
-        }
+        self.isRecursiveScan = recursive
 
         self.currentFolderURL = standardURL
         UserDefaults.standard.set(standardURL.path, forKey: Self.userDefaultsLastOpenedFolderKey)
@@ -267,9 +264,11 @@ public final class AppState: ObservableObject {
     }
 
     public func toggleRecursiveScan() {
-        isRecursiveScan.toggle()
+        let newRec = !isRecursiveScan
         if let current = currentFolderURL {
-            navigateToFolder(current, selectTrackURL: audioEngine.currentTrack?.url, autoPlay: false)
+            navigateToFolder(current, selectTrackURL: audioEngine.currentTrack?.url, autoPlay: false, recursive: newRec)
+        } else {
+            isRecursiveScan = newRec
         }
     }
 
@@ -407,9 +406,10 @@ public final class AppState: ObservableObject {
         }
     }
 
-    public func navigateUpToParent() {
+    public func navigateUpToParent(recursive: Bool? = nil) {
         if let parent = parentFolderURL {
-            navigateToFolder(parent)
+            let isOptionPressed = recursive ?? Self.isOptionKeyPressed
+            navigateToFolder(parent, recursive: isOptionPressed)
         }
     }
 

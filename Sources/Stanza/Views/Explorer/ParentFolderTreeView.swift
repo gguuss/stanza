@@ -53,8 +53,7 @@ public struct ParentFolderTreeView: View {
                             let isParent = folderURL.path == appState.parentFolderURL?.path
 
                             Button(action: {
-                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-                                appState.navigateToFolder(folderURL, recursive: isOptionPressed ? true : nil)
+                                appState.navigateToFolder(folderURL, recursive: AppState.isOptionKeyPressed)
                             }) {
                                 Text(folderURL.lastPathComponent.isEmpty ? "/" : folderURL.lastPathComponent)
                                     .font(.system(size: 9.5, weight: (isCurrent || isParent) ? .bold : .regular, design: .monospaced))
@@ -219,8 +218,7 @@ public struct FolderTreeNodeRow: View {
 
                 // Folder Icon & Name
                 Button(action: {
-                    let isOptionPressed = NSEvent.modifierFlags.contains(.option)
-                    appState.navigateToFolder(folderURL, recursive: isOptionPressed ? true : nil)
+                    appState.navigateToFolder(folderURL, recursive: AppState.isOptionKeyPressed)
                 }) {
                     HStack(spacing: 5) {
                         Image(systemName: folderIcon)
