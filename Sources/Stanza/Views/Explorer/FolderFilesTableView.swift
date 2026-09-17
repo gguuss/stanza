@@ -114,8 +114,27 @@ public struct FolderFilesTableView: View {
             Divider().background(Color.black.opacity(0.4))
 
             // Bottom Status Bar
-            HStack {
-                Text("\(appState.queue.count) file\(appState.queue.count == 1 ? "" : "s") in folder, \(totalQueueSize)")
+            HStack(spacing: 8) {
+                // Recursive Scan Mode Toggle Button
+                Button(action: {
+                    appState.toggleRecursiveScan()
+                }) {
+                    HStack(spacing: 4) {
+                        Image(systemName: appState.isRecursiveScan ? "arrow.triangle.branch" : "folder")
+                            .font(.system(size: 9, weight: .bold))
+                        Text(appState.isRecursiveScan ? "RECURSIVE" : "FLAT")
+                            .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                    }
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(appState.isRecursiveScan ? Color.cyan.opacity(0.2) : Color.white.opacity(0.06))
+                    .foregroundColor(appState.isRecursiveScan ? Color.cyan : Color.white.opacity(0.6))
+                    .cornerRadius(3)
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Recursive Subfolder Exploration (Cmd+Opt+R or Alt+Click folder)")
+
+                Text("\(appState.queue.count) file\(appState.queue.count == 1 ? "" : "s")\(appState.isRecursiveScan ? " (recursive)" : ""), \(totalQueueSize)")
                     .font(.system(size: 10.5, design: .monospaced))
                     .foregroundColor(.white.opacity(0.45))
 

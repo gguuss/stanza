@@ -47,7 +47,10 @@ public struct SiblingFoldersView: View {
 
             // Parent Folder Banner
             if let parent = appState.parentFolderURL {
-                Button(action: { appState.navigateToFolder(parent) }) {
+                Button(action: {
+                    let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+                    appState.navigateToFolder(parent, recursive: isOptionPressed ? true : nil)
+                }) {
                     HStack(spacing: 5) {
                         Image(systemName: "arrow.turn.left.up")
                             .font(.system(size: 10, weight: .bold))
@@ -74,7 +77,19 @@ public struct SiblingFoldersView: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .help("Jump to parent: \(parent.path)")
+                .help("Jump to parent (Alt+Click to explore recursively): \(parent.path)")
+                .contextMenu {
+                    Button("Explore") {
+                        appState.navigateToFolder(parent, recursive: false)
+                    }
+                    Button("Explore Recursively (Alt+Click)") {
+                        appState.navigateToFolder(parent, recursive: true)
+                    }
+                    Divider()
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([parent])
+                    }
+                }
 
                 Divider().background(Color.white.opacity(0.04))
             }
@@ -102,7 +117,10 @@ public struct SiblingFoldersView: View {
                         ForEach(appState.siblingFolders) { item in
                             let isCurrent = item.url.path == appState.currentFolderURL?.path
 
-                            Button(action: { appState.navigateToFolder(item.url) }) {
+                            Button(action: {
+                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+                                appState.navigateToFolder(item.url, recursive: isOptionPressed ? true : nil)
+                            }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: isCurrent ? "speaker.wave.2.fill" : "folder")
                                         .font(.system(size: 10.5))
@@ -137,7 +155,19 @@ public struct SiblingFoldersView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .help(item.url.path)
+                            .help("Click to open, Alt+Click to explore recursively\n\(item.url.path)")
+                            .contextMenu {
+                                Button("Explore") {
+                                    appState.navigateToFolder(item.url, recursive: false)
+                                }
+                                Button("Explore Recursively (Alt+Click)") {
+                                    appState.navigateToFolder(item.url, recursive: true)
+                                }
+                                Divider()
+                                Button("Reveal in Finder") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                                }
+                            }
                         }
                     }
 
@@ -159,7 +189,10 @@ public struct SiblingFoldersView: View {
                         .padding(.bottom, 2)
 
                         ForEach(appState.childFolders) { item in
-                            Button(action: { appState.navigateToFolder(item.url) }) {
+                            Button(action: {
+                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+                                appState.navigateToFolder(item.url, recursive: isOptionPressed ? true : nil)
+                            }) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "folder")
                                         .font(.system(size: 10.5))
@@ -184,7 +217,19 @@ public struct SiblingFoldersView: View {
                                 .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
-                            .help(item.url.path)
+                            .help("Click to open, Alt+Click to explore recursively\n\(item.url.path)")
+                            .contextMenu {
+                                Button("Explore") {
+                                    appState.navigateToFolder(item.url, recursive: false)
+                                }
+                                Button("Explore Recursively (Alt+Click)") {
+                                    appState.navigateToFolder(item.url, recursive: true)
+                                }
+                                Divider()
+                                Button("Reveal in Finder") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([item.url])
+                                }
+                            }
                         }
                     }
                 }

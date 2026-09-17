@@ -17,6 +17,7 @@ public enum VisualizerMode: String, CaseIterable, Identifiable, Sendable {
 }
 
 public struct VisualizerContainerView: View {
+    @ObservedObject var appState: AppState
     @ObservedObject var audioEngine: AudioEngineController
     @Binding var selectedMode: VisualizerMode
 
@@ -24,9 +25,20 @@ public struct VisualizerContainerView: View {
     @State private var isExtracting: Bool = false
 
     public init(
+        appState: AppState,
+        selectedMode: Binding<VisualizerMode>
+    ) {
+        self.appState = appState
+        self.audioEngine = appState.audioEngine
+        self._selectedMode = selectedMode
+    }
+
+    public init(
         audioEngine: AudioEngineController,
         selectedMode: Binding<VisualizerMode>
     ) {
+        let dummy = AppState()
+        self.appState = dummy
         self.audioEngine = audioEngine
         self._selectedMode = selectedMode
     }
@@ -97,12 +109,18 @@ public struct VisualizerContainerView: View {
 
             Divider().background(Color.black.opacity(0.5))
 
+            // Waveform Minimap Overview Bar (active in Stereo Waveform mode)
+            if selectedMode == .stereoWaveform {
+                WaveformMinimapBar(appState: appState, waveformData: waveformData)
+                Divider().background(Color.black.opacity(0.4))
+            }
+
             // Main Visualizer Area
             Group {
                 switch selectedMode {
                 case .stereoWaveform:
                     StereoWaveformView(
-                        audioEngine: audioEngine,
+                        appState: appState,
                         waveformData: waveformData,
                         isExtracting: isExtracting
                     )

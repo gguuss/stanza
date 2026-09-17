@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ sender: NSApplication, openFiles filenames: [String]) {
         let urls = filenames.map { URL(fileURLWithPath: $0) }
         Task { @MainActor in
+            self.appState?.hasHandledExternalOpen = true
             self.appState?.addURLs(urls, autoPlayFirst: false)
             if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
                 window.makeKeyAndOrderFront(nil)
@@ -18,6 +19,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
         Task { @MainActor in
+            self.appState?.hasHandledExternalOpen = true
             self.appState?.addURLs([url], autoPlayFirst: false)
             if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
                 window.makeKeyAndOrderFront(nil)
@@ -28,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func application(_ application: NSApplication, open urls: [URL]) {
         Task { @MainActor in
+            self.appState?.hasHandledExternalOpen = true
             self.appState?.addURLs(urls, autoPlayFirst: false)
             if let window = application.windows.first(where: { $0.title == "Stanza" }) ?? application.windows.first {
                 window.makeKeyAndOrderFront(nil)
@@ -59,6 +62,7 @@ struct StanzaApp: App {
                     appDelegate.appState = appState
                 }
                 .onOpenURL { url in
+                    appState.hasHandledExternalOpen = true
                     appState.addURLs([url], autoPlayFirst: false)
                 }
         }
@@ -193,6 +197,35 @@ struct StanzaApp: App {
                     appState.toggleLeftPaneOrientation()
                 }
                 .keyboardShortcut("l", modifiers: [.command, .option])
+
+                Divider()
+
+                Button(appState.isRecursiveScan ? "Disable Recursive Subfolder Exploration" : "Enable Recursive Subfolder Exploration") {
+                    appState.toggleRecursiveScan()
+                }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+
+                Divider()
+
+                Button("Zoom In Waveform") {
+                    appState.zoomIn()
+                }
+                .keyboardShortcut("=", modifiers: .command)
+
+                Button("Zoom Out Waveform") {
+                    appState.zoomOut()
+                }
+                .keyboardShortcut("-", modifiers: .command)
+
+                Button("Reset Waveform Zoom") {
+                    appState.resetZoom()
+                }
+                .keyboardShortcut("0", modifiers: .command)
+
+                Button(appState.isAutoFollowingPlayhead ? "Disable Playhead Auto-Follow" : "Enable Playhead Auto-Follow") {
+                    appState.toggleAutoFollowPlayhead()
+                }
+                .keyboardShortcut("f", modifiers: [.command, .shift])
             }
         }
     }

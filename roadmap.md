@@ -87,8 +87,8 @@ This document outlines planned features, enhancements, and known bugs/polish ite
 
 | Version | Focus Area | Key Deliverables |
 |---|---|---|
-| **v1.1** | *Stanza Explorer (Current)* | Live folder media navigation, parent tree, sibling pane, signed release |
+| **v1.1** | *Stanza Explorer* | Live folder media navigation, parent tree, sibling pane, signed release |
 | **v1.2** | *Persistence & Recursive Browsing* | Last opened folder restore, persistent settings audit, Alt+Click recursive scan |
-| **v1.3** | *Waveform Inspection* | Horizontal waveform zooming, smooth panning, minimap overview |
+| **v1.3** | *Waveform Inspection (Current)* | Horizontal waveform zooming, smooth panning, minimap overview |
 | **v1.4** | *Markers & Slicing* | Multi-marker lists, folder metadata `.stanza_markers.json`, slice export |
 | **v1.5** | *DJ & Pro Audio Integrations* | `rekordbox.xml` cue export, native C++/Metal spectral visualizer pipeline |

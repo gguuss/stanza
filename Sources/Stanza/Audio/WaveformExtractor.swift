@@ -36,7 +36,7 @@ public final class WaveformExtractor: @unchecked Sendable {
         init(_ data: WaveformData) { self.data = data }
     }
 
-    public func extractWaveform(from url: URL, targetPoints: Int = 1200) async -> WaveformData {
+    public func extractWaveform(from url: URL, targetPoints: Int = 2400) async -> WaveformData {
         if let cached = cache.object(forKey: url as NSURL) {
             return cached.data
         }

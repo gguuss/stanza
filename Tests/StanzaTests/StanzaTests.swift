@@ -3,6 +3,31 @@ import AVFoundation
 @testable import Stanza
 
 final class StanzaTests: XCTestCase {
+    override func setUp() {
+        super.setUp()
+        clearUserDefaults()
+    }
+
+    override func tearDown() {
+        clearUserDefaults()
+        super.tearDown()
+    }
+
+    private func clearUserDefaults() {
+        let keys = [
+            AudioEngineController.userDefaultsVolumeKey,
+            AudioEngineController.userDefaultsContinuousKey,
+            AppState.userDefaultsLastOpenedFolderKey,
+            AppState.userDefaultsLastSelectedTrackKey,
+            AppState.userDefaultsVisualizerModeKey,
+            AppState.userDefaultsLeftPaneOrientationKey,
+            AppState.userDefaultsIsRecursiveScanKey
+        ]
+        for key in keys {
+            UserDefaults.standard.removeObject(forKey: key)
+        }
+    }
+
     func testAudioTrackDurationFormatting() {
         let track = AudioTrack(
             url: URL(fileURLWithPath: "/dummy/song.mp3"),
@@ -376,6 +401,231 @@ final class StanzaTests: XCTestCase {
         XCTAssertFalse(appState.isFolderExpanded(albumDir))
         appState.toggleFolderExpansion(albumDir)
         XCTAssertTrue(appState.isFolderExpanded(albumDir))
+    }
+
+    @MainActor
+    func testPersistentSettingsSaveAndRestore() {
+        let engine = AudioEngineController.shared
+        let appState = AppState()
+
+        // 1. Verify and test persistent audio settings
+        engine.volume = 0.42
+        XCTAssertEqual(UserDefaults.standard.float(forKey: AudioEngineController.userDefaultsVolumeKey), 0.42, accuracy: 0.01)
+
+        engine.isContinuousPlayback = false
+        XCTAssertEqual(UserDefaults.standard.bool(forKey: AudioEngineController.userDefaultsContinuousKey), false)
+
+        engine.isContinuousPlayback = true
+        XCTAssertEqual(UserDefaults.standard.bool(forKey: AudioEngineController.userDefaultsContinuousKey), true)
+
+        // 2. Verify and test persistent AppState UI settings
+        appState.visualizerMode = .frequency
+        XCTAssertEqual(UserDefaults.standard.string(forKey: AppState.userDefaultsVisualizerModeKey), VisualizerMode.frequency.rawValue)
+
+        appState.leftPaneOrientation = .vertical
+        XCTAssertEqual(UserDefaults.standard.string(forKey: AppState.userDefaultsLeftPaneOrientationKey), LeftPaneOrientation.vertical.rawValue)
+
+        appState.isRecursiveScan = true
+        XCTAssertEqual(UserDefaults.standard.bool(forKey: AppState.userDefaultsIsRecursiveScanKey), true)
+
+        // 3. Verify volatile states remain default/transient
+        XCTAssertFalse(engine.isReversed)
+        XCTAssertNil(engine.loopRange)
+        XCTAssertFalse(engine.isDimmed)
+        XCTAssertFalse(engine.isMuted)
+        XCTAssertEqual(engine.playbackState, .stopped)
+    }
+
+    @MainActor
+    func testStartupSessionRestoration() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let testTrackURL = tempDir.appendingPathComponent("sample.mp3")
+        try "dummy audio content".write(to: testTrackURL, atomically: true, encoding: .utf8)
+
+        // Pre-save session to UserDefaults
+        UserDefaults.standard.set(tempDir.path, forKey: AppState.userDefaultsLastOpenedFolderKey)
+        UserDefaults.standard.set(testTrackURL.path, forKey: AppState.userDefaultsLastSelectedTrackKey)
+
+        let appState = AppState()
+        appState.restoreLastSession()
+
+        XCTAssertEqual(appState.currentFolderURL?.path, tempDir.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertEqual(appState.queue.first?.filename, "sample.mp3")
+        XCTAssertEqual(appState.selectedTrackID, appState.queue.first?.id)
+
+        // Verify that external open flag prevents restore override
+        let otherDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: otherDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: otherDir) }
+
+        appState.hasHandledExternalOpen = true
+        UserDefaults.standard.set(otherDir.path, forKey: AppState.userDefaultsLastOpenedFolderKey)
+        appState.restoreLastSession()
+        // Should NOT have changed to otherDir because external open occurred
+        XCTAssertEqual(appState.currentFolderURL?.path, tempDir.resolvingSymlinksInPath().standardizedFileURL.path)
+    }
+
+    @MainActor
+    func testRecursiveFolderScanning() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let sub1 = root.appendingPathComponent("Sub1")
+        let deep = sub1.appendingPathComponent("Deep")
+        let sub2 = root.appendingPathComponent("Sub2")
+
+        try FileManager.default.createDirectory(at: deep, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: sub2, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let f0 = root.appendingPathComponent("track0.mp3")
+        let f1 = sub1.appendingPathComponent("track1.mp3")
+        let f2 = deep.appendingPathComponent("track2.wav")
+        let f3 = sub2.appendingPathComponent("track3.flac")
+        let ignored = deep.appendingPathComponent("readme.txt")
+
+        try "audio".write(to: f0, atomically: true, encoding: .utf8)
+        try "audio".write(to: f1, atomically: true, encoding: .utf8)
+        try "audio".write(to: f2, atomically: true, encoding: .utf8)
+        try "audio".write(to: f3, atomically: true, encoding: .utf8)
+        try "text".write(to: ignored, atomically: true, encoding: .utf8)
+
+        let appState = AppState()
+
+        // 1. Flat scan
+        let flatItems = appState.scanAudioItemsInFolder(root, recursive: false)
+        XCTAssertEqual(flatItems.count, 1)
+        XCTAssertEqual(flatItems.first?.url.lastPathComponent, "track0.mp3")
+        XCTAssertEqual(flatItems.first?.relativePath, "track0.mp3")
+
+        // 2. Recursive scan
+        let recursiveItems = appState.scanAudioItemsInFolder(root, recursive: true)
+        XCTAssertEqual(recursiveItems.count, 4)
+
+        let paths = recursiveItems.compactMap { $0.relativePath }
+        XCTAssertTrue(paths.contains("track0.mp3"))
+        XCTAssertTrue(paths.contains("Sub1/track1.mp3"))
+        XCTAssertTrue(paths.contains("Sub1/Deep/track2.wav"))
+        XCTAssertTrue(paths.contains("Sub2/track3.flac"))
+
+        // 3. Navigation with recursive mode
+        appState.navigateToFolder(root, recursive: true)
+        XCTAssertTrue(appState.isRecursiveScan)
+        XCTAssertEqual(appState.queue.count, 4)
+        XCTAssertTrue(appState.statusMessage.contains("across subdirectories"))
+
+        // Check relative paths on AudioTrack
+        let trackDeep = appState.queue.first(where: { $0.filename == "track2.wav" })
+        XCTAssertEqual(trackDeep?.relativePath, "Sub1/Deep/track2.wav")
+
+        // 4. Toggle recursive scan off
+        appState.toggleRecursiveScan()
+        XCTAssertFalse(appState.isRecursiveScan)
+        XCTAssertEqual(appState.queue.count, 1)
+        XCTAssertEqual(appState.queue.first?.filename, "track0.mp3")
+    }
+
+    @MainActor
+    func testWaveformZoomAndOffsetCalculations() {
+        let appState = AppState()
+
+        XCTAssertEqual(appState.waveformZoomLevel, 1.0)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.0)
+
+        // Zoom in
+        appState.zoomIn() // 1.5x
+        XCTAssertEqual(appState.waveformZoomLevel, 1.5, accuracy: 0.01)
+
+        appState.zoomIn() // 2.25x
+        XCTAssertEqual(appState.waveformZoomLevel, 2.25, accuracy: 0.01)
+
+        // Set high zoom
+        appState.waveformZoomLevel = 16.0
+        XCTAssertEqual(appState.waveformZoomLevel, 16.0)
+
+        // Clamping upper zoom bound
+        appState.waveformZoomLevel = 100.0
+        XCTAssertEqual(appState.waveformZoomLevel, 32.0)
+
+        // Clamping lower zoom bound
+        appState.waveformZoomLevel = 0.2
+        XCTAssertEqual(appState.waveformZoomLevel, 1.0)
+
+        // Viewport offset clamping at 4x zoom (visible fraction = 0.25, max offset = 0.75)
+        appState.waveformZoomLevel = 4.0
+        appState.waveformViewportOffset = 0.5
+        XCTAssertEqual(appState.waveformViewportOffset, 0.5, accuracy: 0.001)
+
+        appState.waveformViewportOffset = 0.95 // exceeds max 0.75
+        XCTAssertEqual(appState.waveformViewportOffset, 0.75, accuracy: 0.001)
+
+        appState.waveformViewportOffset = -0.1 // below min 0.0
+        XCTAssertEqual(appState.waveformViewportOffset, 0.0, accuracy: 0.001)
+
+        // Reset zoom
+        appState.resetZoom()
+        XCTAssertEqual(appState.waveformZoomLevel, 1.0)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.0)
+    }
+
+    @MainActor
+    func testPlayheadAutoFollowViewportCalculation() {
+        let appState = AppState()
+        appState.waveformZoomLevel = 4.0 // visible fraction = 0.25
+        appState.isAutoFollowingPlayhead = true
+
+        // Playhead at 0.5 -> target offset = 0.5 - (0.25 / 2) = 0.375
+        appState.updatePlayheadFollow(progress: 0.5)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.375, accuracy: 0.001)
+
+        // Playhead at 0.05 -> target offset = 0.05 - 0.125 = -0.075 -> clamped to 0.0
+        appState.updatePlayheadFollow(progress: 0.05)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.0, accuracy: 0.001)
+
+        // Playhead at 0.95 -> target offset = 0.95 - 0.125 = 0.825 -> clamped to 0.75
+        appState.updatePlayheadFollow(progress: 0.95)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.75, accuracy: 0.001)
+
+        // When auto-follow is disabled, viewport offset shouldn't change
+        appState.toggleAutoFollowPlayhead()
+        XCTAssertFalse(appState.isAutoFollowingPlayhead)
+        appState.updatePlayheadFollow(progress: 0.5)
+        XCTAssertEqual(appState.waveformViewportOffset, 0.75, accuracy: 0.001)
+    }
+
+    func testWaveformExtractionHighResolution() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sampleURL = tempDir.appendingPathComponent("test_highres.wav")
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        let sampleCount: AVAudioFrameCount = 44100 * 2 // 2 seconds
+
+        do {
+            let audioFile = try AVAudioFile(forWriting: sampleURL, settings: format.settings)
+            let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: sampleCount)!
+            buffer.frameLength = sampleCount
+            guard let channelData = buffer.floatChannelData else {
+                XCTFail("Missing channel data")
+                return
+            }
+            for i in 0..<Int(sampleCount) {
+                let sample = Float(sin(Double(i) * 0.1) * 0.7)
+                channelData[0][i] = sample
+                channelData[1][i] = sample
+            }
+            try audioFile.write(from: buffer)
+        }
+
+        let waveform = await WaveformExtractor.shared.extractWaveform(from: sampleURL, targetPoints: 2400)
+        XCTAssertEqual(waveform.samplePoints, 2400)
+        XCTAssertEqual(waveform.left.minPeaks.count, 2400)
+        XCTAssertEqual(waveform.left.maxPeaks.count, 2400)
+        XCTAssertEqual(waveform.right.minPeaks.count, 2400)
+        XCTAssertEqual(waveform.right.maxPeaks.count, 2400)
+        XCTAssertGreaterThan(waveform.duration, 1.9)
     }
 }
 

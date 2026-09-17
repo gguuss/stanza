@@ -24,12 +24,26 @@ public struct QueueRowView: View {
                 }
             }
 
-            // File Name
-            Text(track.filename)
-                .font(.system(size: 12, weight: isCurrentTrack ? .bold : .regular))
-                .foregroundColor(isCurrentTrack ? Color(red: 1.0, green: 0.65, blue: 0.25) : .white)
-                .lineLimit(1)
-                .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
+            // File Name & Relative Path
+            HStack(spacing: 5) {
+                if let rel = track.relativePath, rel.contains("/") {
+                    let folder = (rel as NSString).deletingLastPathComponent
+                    Text(folder)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundColor(Color.cyan.opacity(0.85))
+                        .padding(.horizontal, 3.5)
+                        .padding(.vertical, 1)
+                        .background(Color.cyan.opacity(0.12))
+                        .cornerRadius(2)
+                        .lineLimit(1)
+                }
+
+                Text(track.filename)
+                    .font(.system(size: 12, weight: isCurrentTrack ? .bold : .regular))
+                    .foregroundColor(isCurrentTrack ? Color(red: 1.0, green: 0.65, blue: 0.25) : .white)
+                    .lineLimit(1)
+            }
+            .frame(minWidth: 160, maxWidth: .infinity, alignment: .leading)
 
             // File Size
             Text(track.formattedFileSize)

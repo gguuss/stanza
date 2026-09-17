@@ -11,7 +11,7 @@ public struct MainPlayerView: View {
         VSplitView {
             // Top: Visualizer + Mode Switcher + Metadata Banner
             VisualizerContainerView(
-                audioEngine: appState.audioEngine,
+                appState: appState,
                 selectedMode: $appState.visualizerMode
             )
             .frame(minHeight: 140, idealHeight: 200, maxHeight: 400)
@@ -43,9 +43,7 @@ public struct MainPlayerView: View {
         }
         .onAppear {
             if appState.currentFolderURL == nil {
-                if let music = appState.quickAccessFolders.first?.url {
-                    appState.navigateToFolder(music, autoPlay: false)
-                }
+                appState.restoreLastSession()
             }
         }
     }

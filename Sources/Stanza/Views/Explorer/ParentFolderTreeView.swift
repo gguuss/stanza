@@ -52,7 +52,10 @@ public struct ParentFolderTreeView: View {
                             let isCurrent = folderURL.path == current.path
                             let isParent = folderURL.path == appState.parentFolderURL?.path
 
-                            Button(action: { appState.navigateToFolder(folderURL) }) {
+                            Button(action: {
+                                let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+                                appState.navigateToFolder(folderURL, recursive: isOptionPressed ? true : nil)
+                            }) {
                                 Text(folderURL.lastPathComponent.isEmpty ? "/" : folderURL.lastPathComponent)
                                     .font(.system(size: 9.5, weight: (isCurrent || isParent) ? .bold : .regular, design: .monospaced))
                                     .foregroundColor(isCurrent ? .orange : (isParent ? .yellow : .white.opacity(0.7)))
@@ -62,7 +65,19 @@ public struct ParentFolderTreeView: View {
                                     .cornerRadius(2)
                             }
                             .buttonStyle(.plain)
-                            .help(folderURL.path)
+                            .help("Click to open, Alt+Click to explore recursively\n\(folderURL.path)")
+                            .contextMenu {
+                                Button("Explore") {
+                                    appState.navigateToFolder(folderURL, recursive: false)
+                                }
+                                Button("Explore Recursively (Alt+Click)") {
+                                    appState.navigateToFolder(folderURL, recursive: true)
+                                }
+                                Divider()
+                                Button("Reveal in Finder") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([folderURL])
+                                }
+                            }
 
                             if folderURL.path != current.path {
                                 Text("›")
@@ -204,7 +219,8 @@ public struct FolderTreeNodeRow: View {
 
                 // Folder Icon & Name
                 Button(action: {
-                    appState.navigateToFolder(folderURL)
+                    let isOptionPressed = NSEvent.modifierFlags.contains(.option)
+                    appState.navigateToFolder(folderURL, recursive: isOptionPressed ? true : nil)
                 }) {
                     HStack(spacing: 5) {
                         Image(systemName: folderIcon)
@@ -244,6 +260,19 @@ public struct FolderTreeNodeRow: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help("Click to open, Alt+Click to explore recursively\n\(folderURL.path)")
+                .contextMenu {
+                    Button("Explore") {
+                        appState.navigateToFolder(folderURL, recursive: false)
+                    }
+                    Button("Explore Recursively (Alt+Click)") {
+                        appState.navigateToFolder(folderURL, recursive: true)
+                    }
+                    Divider()
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.activateFileViewerSelecting([folderURL])
+                    }
+                }
             }
             .padding(.horizontal, 6)
 

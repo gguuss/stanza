@@ -20,12 +20,16 @@ public enum LoopMode: String, CaseIterable, Identifiable, Sendable {
 public final class AudioEngineController: ObservableObject {
     public static let shared = AudioEngineController()
 
+    public static let userDefaultsVolumeKey = "stanza.volume"
+    public static let userDefaultsContinuousKey = "stanza.isContinuousPlayback"
+
     @Published public private(set) var playbackState: PlaybackState = .stopped
     @Published public private(set) var currentTime: TimeInterval = 0
     @Published public private(set) var duration: TimeInterval = 0
     @Published public private(set) var currentTrack: AudioTrack?
     @Published public var volume: Float = 0.85 {
         didSet {
+            UserDefaults.standard.set(volume, forKey: Self.userDefaultsVolumeKey)
             updateVolume()
         }
     }
@@ -40,7 +44,11 @@ public final class AudioEngineController: ObservableObject {
         }
     }
     @Published public var loopMode: LoopMode = .off
-    @Published public var isContinuousPlayback: Bool = true
+    @Published public var isContinuousPlayback: Bool = true {
+        didSet {
+            UserDefaults.standard.set(isContinuousPlayback, forKey: Self.userDefaultsContinuousKey)
+        }
+    }
     @Published public var loopRange: ClosedRange<TimeInterval>? = nil
     @Published public var isReversed: Bool = false
 
@@ -60,6 +68,12 @@ public final class AudioEngineController: ObservableObject {
     private var isSeeking: Bool = false
 
     public init() {
+        if UserDefaults.standard.object(forKey: Self.userDefaultsVolumeKey) != nil {
+            self.volume = UserDefaults.standard.float(forKey: Self.userDefaultsVolumeKey)
+        }
+        if UserDefaults.standard.object(forKey: Self.userDefaultsContinuousKey) != nil {
+            self.isContinuousPlayback = UserDefaults.standard.bool(forKey: Self.userDefaultsContinuousKey)
+        }
         setupEngine()
     }
 

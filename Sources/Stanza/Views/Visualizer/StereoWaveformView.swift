@@ -1,6 +1,8 @@
 import SwiftUI
+import AppKit
 
 public struct StereoWaveformView: View {
+    @ObservedObject var appState: AppState
     @ObservedObject var audioEngine: AudioEngineController
     let waveformData: WaveformData
     let isExtracting: Bool
@@ -12,12 +14,27 @@ public struct StereoWaveformView: View {
     @State private var dragStartFraction: Double? = nil
     @State private var dragCurrentFraction: Double? = nil
     @State private var isSelectingLoop: Bool = false
+    @State private var isPanning: Bool = false
+    @State private var panInitialOffset: Double = 0.0
+
+    public init(
+        appState: AppState,
+        waveformData: WaveformData,
+        isExtracting: Bool = false
+    ) {
+        self.appState = appState
+        self.audioEngine = appState.audioEngine
+        self.waveformData = waveformData
+        self.isExtracting = isExtracting
+    }
 
     public init(
         audioEngine: AudioEngineController,
         waveformData: WaveformData,
         isExtracting: Bool = false
     ) {
+        let dummy = AppState()
+        self.appState = dummy
         self.audioEngine = audioEngine
         self.waveformData = waveformData
         self.isExtracting = isExtracting
@@ -28,6 +45,10 @@ public struct StereoWaveformView: View {
             let width = geometry.size.width
             let height = geometry.size.height
             let halfHeight = height / 2.0
+
+            let zoom = appState.waveformZoomLevel
+            let offset = appState.waveformViewportOffset
+            let visibleFraction = 1.0 / Double(zoom)
 
             ZStack(alignment: .topLeading) {
                 // Background
@@ -67,7 +88,7 @@ public struct StereoWaveformView: View {
                     }
                 }
 
-                // Waveform Canvas (Dual L/R)
+                // Waveform Canvas (Dual L/R with Zoom & Viewport Slicing)
                 Canvas { context, size in
                     let w = size.width
                     let h = size.height
@@ -79,25 +100,32 @@ public struct StereoWaveformView: View {
 
                     let leftPeaks = waveformData.left
                     let rightPeaks = waveformData.right
-
-                    // Slate-blue color matching screenshot 2
                     let waveColor = Color(red: 0.52, green: 0.58, blue: 0.65)
+
+                    // Calculate index slice corresponding to current viewport
+                    let startIndex = max(0, Int(Double(points) * offset) - 1)
+                    let endIndex = min(points, Int(Double(points) * (offset + visibleFraction)) + 2)
+                    guard startIndex < endIndex else { return }
 
                     // Draw Left Channel (Top half)
                     var leftPath = Path()
-                    for i in 0..<points {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
+                    var isFirst = true
+                    for i in startIndex..<endIndex {
+                        let frac = Double(i) / Double(points)
+                        let x = CGFloat((frac - offset) / visibleFraction) * w
                         let maxVal = CGFloat(leftPeaks.maxPeaks[i])
                         let y = quarter - (maxVal * quarter * 0.95)
-                        if i == 0 {
+                        if isFirst {
                             leftPath.move(to: CGPoint(x: x, y: quarter))
                             leftPath.addLine(to: CGPoint(x: x, y: y))
+                            isFirst = false
                         } else {
                             leftPath.addLine(to: CGPoint(x: x, y: y))
                         }
                     }
-                    for i in (0..<points).reversed() {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
+                    for i in (startIndex..<endIndex).reversed() {
+                        let frac = Double(i) / Double(points)
+                        let x = CGFloat((frac - offset) / visibleFraction) * w
                         let minVal = CGFloat(leftPeaks.minPeaks[i])
                         let y = quarter - (minVal * quarter * 0.95)
                         leftPath.addLine(to: CGPoint(x: x, y: y))
@@ -108,19 +136,23 @@ public struct StereoWaveformView: View {
                     // Draw Right Channel (Bottom half)
                     var rightPath = Path()
                     let rightCenter = half + quarter
-                    for i in 0..<points {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
+                    isFirst = true
+                    for i in startIndex..<endIndex {
+                        let frac = Double(i) / Double(points)
+                        let x = CGFloat((frac - offset) / visibleFraction) * w
                         let maxVal = CGFloat(rightPeaks.maxPeaks[i])
                         let y = rightCenter - (maxVal * quarter * 0.95)
-                        if i == 0 {
+                        if isFirst {
                             rightPath.move(to: CGPoint(x: x, y: rightCenter))
                             rightPath.addLine(to: CGPoint(x: x, y: y))
+                            isFirst = false
                         } else {
                             rightPath.addLine(to: CGPoint(x: x, y: y))
                         }
                     }
-                    for i in (0..<points).reversed() {
-                        let x = (CGFloat(i) / CGFloat(points)) * w
+                    for i in (startIndex..<endIndex).reversed() {
+                        let frac = Double(i) / Double(points)
+                        let x = CGFloat((frac - offset) / visibleFraction) * w
                         let minVal = CGFloat(rightPeaks.minPeaks[i])
                         let y = rightCenter - (minVal * quarter * 0.95)
                         rightPath.addLine(to: CGPoint(x: x, y: y))
@@ -128,6 +160,7 @@ public struct StereoWaveformView: View {
                     rightPath.closeSubpath()
                     context.fill(rightPath, with: .color(waveColor))
 
+                    // Reference zero-lines
                     let lineLeft = Path { p in
                         p.move(to: CGPoint(x: 0, y: quarter))
                         p.addLine(to: CGPoint(x: w, y: quarter))
@@ -157,73 +190,161 @@ public struct StereoWaveformView: View {
                 }
 
                 // Hover guide line
-                if let hoverX = hoverFraction, !isSelectingLoop {
-                    let posX = hoverX * width
-                    Path { p in
-                        p.move(to: CGPoint(x: posX, y: 0))
-                        p.addLine(to: CGPoint(x: posX, y: height))
+                if let hoverX = hoverFraction, !isSelectingLoop, !isPanning {
+                    let posX = CGFloat((hoverX - offset) / visibleFraction) * width
+                    if posX >= 0 && posX <= width {
+                        Path { p in
+                            p.move(to: CGPoint(x: posX, y: 0))
+                            p.addLine(to: CGPoint(x: posX, y: height))
+                        }
+                        .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                     }
-                    .stroke(Color.white.opacity(0.3), style: StrokeStyle(lineWidth: 1, dash: [4, 4]))
                 }
 
                 // Render Active Loop Selection or In-Progress Drag Selection
                 if isSelectingLoop, let startF = dragStartFraction, let currF = dragCurrentFraction {
                     let minF = min(startF, currF)
                     let maxF = max(startF, currF)
-                    let startX = minF * width
-                    let endX = maxF * width
+                    let startX = CGFloat((minF - offset) / visibleFraction) * width
+                    let endX = CGFloat((maxF - offset) / visibleFraction) * width
                     loopOverlayView(startX: startX, endX: endX, height: height, minF: minF, maxF: maxF, isLiveDrag: true)
                 } else if let range = audioEngine.loopRange, audioEngine.duration > 0 {
                     let minF = range.lowerBound / audioEngine.duration
                     let maxF = range.upperBound / audioEngine.duration
-                    let startX = minF * width
-                    let endX = maxF * width
+                    let startX = CGFloat((minF - offset) / visibleFraction) * width
+                    let endX = CGFloat((maxF - offset) / visibleFraction) * width
                     loopOverlayView(startX: startX, endX: endX, height: height, minF: minF, maxF: maxF, isLiveDrag: false)
                 }
 
                 // Playhead (Orange vertical line & timestamp badge)
                 let actualProgress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
                 let progress = scrubFraction ?? actualProgress
-                let playheadX = min(max(0, CGFloat(progress) * width), width)
+                let playheadX = CGFloat((progress - offset) / visibleFraction) * width
 
-                // Vertical orange line
-                Rectangle()
-                    .fill(Color(red: 1.0, green: 0.38, blue: 0.08)) // Vibrant orange
-                    .frame(width: 2, height: height)
-                    .position(x: playheadX, y: height / 2.0)
+                if playheadX >= -5 && playheadX <= width + 5 {
+                    // Vertical orange line
+                    Rectangle()
+                        .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
+                        .frame(width: 2, height: height)
+                        .position(x: min(max(0, playheadX), width), y: height / 2.0)
 
-                // Timestamp Badge at center divider (matching screenshot 2: [1:36,0])
-                let displayTime = (scrubFraction != nil && audioEngine.duration > 0)
-                    ? (scrubFraction! * audioEngine.duration)
-                    : audioEngine.currentTime
-                let badgeTime = formatTime(displayTime)
-                let badgeWidth: CGFloat = 52
-                let badgeX = min(max(badgeWidth / 2.0 + 2, playheadX + badgeWidth / 2.0 + 2), width - badgeWidth / 2.0 - 2)
+                    // Timestamp Badge at center divider
+                    let displayTime = (scrubFraction != nil && audioEngine.duration > 0)
+                        ? (scrubFraction! * audioEngine.duration)
+                        : audioEngine.currentTime
+                    let badgeTime = formatTime(displayTime)
+                    let badgeWidth: CGFloat = 52
+                    let badgeX = min(max(badgeWidth / 2.0 + 2, playheadX + badgeWidth / 2.0 + 2), width - badgeWidth / 2.0 - 2)
 
-                Text(badgeTime)
-                    .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                    .foregroundColor(.white)
-                    .padding(.horizontal, 4)
-                    .padding(.vertical, 2)
-                    .background(
-                        RoundedRectangle(cornerRadius: 3)
-                            .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                    )
-                    .position(x: badgeX, y: halfHeight + 12)
+                    Text(badgeTime)
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
+                        )
+                        .position(x: badgeX, y: halfHeight + 12)
+                }
+
+                // Floating Zoom HUD in top-right corner
+                HStack(spacing: 3) {
+                    // Zoom Out
+                    Button(action: { appState.zoomOut() }) {
+                        Image(systemName: "minus.magnifyingglass")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white.opacity(appState.waveformZoomLevel > 1.0 ? 0.85 : 0.3))
+                            .frame(width: 18, height: 18)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(appState.waveformZoomLevel <= 1.0)
+                    .help("Zoom Out (Cmd+-)")
+
+                    // Current Zoom Ratio
+                    Text(String(format: "%.1fx", appState.waveformZoomLevel))
+                        .font(.system(size: 9.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(appState.waveformZoomLevel > 1.0 ? Color.orange : Color.white.opacity(0.6))
+                        .padding(.horizontal, 4)
+
+                    // Zoom In
+                    Button(action: { appState.zoomIn() }) {
+                        Image(systemName: "plus.magnifyingglass")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundColor(.white.opacity(appState.waveformZoomLevel < 32.0 ? 0.85 : 0.3))
+                            .frame(width: 18, height: 18)
+                            .background(Color.white.opacity(0.1))
+                            .cornerRadius(3)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(appState.waveformZoomLevel >= 32.0)
+                    .help("Zoom In (Cmd++)")
+
+                    if appState.waveformZoomLevel > 1.0 {
+                        // Reset Zoom
+                        Button(action: { appState.resetZoom() }) {
+                            Text("1x")
+                                .font(.system(size: 8.5, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.85))
+                                .padding(.horizontal, 4)
+                                .frame(height: 18)
+                                .background(Color.white.opacity(0.1))
+                                .cornerRadius(3)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Reset Zoom to 1x (Cmd+0)")
+
+                        // Playhead Follow Toggle
+                        Button(action: { appState.toggleAutoFollowPlayhead() }) {
+                            Image(systemName: appState.isAutoFollowingPlayhead ? "location.fill" : "location.slash")
+                                .font(.system(size: 8.5, weight: .semibold))
+                                .foregroundColor(appState.isAutoFollowingPlayhead ? Color.orange : Color.white.opacity(0.4))
+                                .frame(width: 18, height: 18)
+                                .background(appState.isAutoFollowingPlayhead ? Color.orange.opacity(0.2) : Color.white.opacity(0.1))
+                                .cornerRadius(3)
+                        }
+                        .buttonStyle(.plain)
+                        .help(appState.isAutoFollowingPlayhead ? "Auto-Follow Playhead Active" : "Auto-Follow Paused")
+                    }
+                }
+                .padding(3)
+                .background(Color.black.opacity(0.55))
+                .cornerRadius(4)
+                .padding(6)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
                     .onChanged { value in
                         isDragging = true
-                        let currentFrac = min(max(0, value.location.x / width), 1.0)
-                        let startFrac = min(max(0, value.startLocation.x / width), 1.0)
+
+                        // Check if Option key is held to pan viewport
+                        let isOptionHeld = NSEvent.modifierFlags.contains(.option)
+                        if isOptionHeld && zoom > 1.0 {
+                            if !isPanning {
+                                isPanning = true
+                                panInitialOffset = appState.waveformViewportOffset
+                                appState.isAutoFollowingPlayhead = false
+                            }
+                            let deltaFraction = Double(-value.translation.width / width) * visibleFraction
+                            let newOffset = panInitialOffset + deltaFraction
+                            let maxOffset = max(0.0, 1.0 - visibleFraction)
+                            appState.waveformViewportOffset = min(max(0.0, newOffset), maxOffset)
+                            return
+                        }
+
+                        // Normal scrub or loop drag
+                        let currentFrac = min(max(0.0, offset + (Double(value.location.x / width) * visibleFraction)), 1.0)
+                        let startFrac = min(max(0.0, offset + (Double(value.startLocation.x / width) * visibleFraction)), 1.0)
                         dragStartFraction = startFrac
                         dragCurrentFraction = currentFrac
 
-                        let delta = abs(currentFrac - startFrac)
-                        if delta > 0.015 {
-                            // Dragging to create a loop section
+                        let deltaPixels = abs(value.translation.width)
+                        if deltaPixels > 10 {
+                            // Dragging to select loop section
                             isSelectingLoop = true
                             scrubFraction = nil
                         } else {
@@ -238,19 +359,25 @@ public struct StereoWaveformView: View {
                         }
                     }
                     .onEnded { value in
-                        let currentFrac = min(max(0, value.location.x / width), 1.0)
-                        let startFrac = min(max(0, value.startLocation.x / width), 1.0)
-                        let delta = abs(currentFrac - startFrac)
+                        if isPanning {
+                            isPanning = false
+                            isDragging = false
+                            dragStartFraction = nil
+                            dragCurrentFraction = nil
+                            return
+                        }
 
-                        if delta > 0.015 && audioEngine.duration > 0 {
-                            // Set loop section and immediately loop!
+                        let currentFrac = min(max(0.0, offset + (Double(value.location.x / width) * visibleFraction)), 1.0)
+                        let startFrac = min(max(0.0, offset + (Double(value.startLocation.x / width) * visibleFraction)), 1.0)
+                        let deltaPixels = abs(value.translation.width)
+
+                        if deltaPixels > 10 && audioEngine.duration > 0 {
                             let minFrac = min(startFrac, currentFrac)
                             let maxFrac = max(startFrac, currentFrac)
                             let loopStart = minFrac * audioEngine.duration
                             let loopEnd = maxFrac * audioEngine.duration
                             audioEngine.setLoopRange(loopStart...loopEnd)
                         } else {
-                            // Single click: clear active loop and seek
                             audioEngine.clearLoop()
                             audioEngine.seek(to: currentFrac * audioEngine.duration)
                         }
@@ -265,9 +392,14 @@ public struct StereoWaveformView: View {
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let location):
-                    hoverFraction = min(max(0, location.x / width), 1.0)
+                    hoverFraction = min(max(0.0, offset + (Double(location.x / width) * visibleFraction)), 1.0)
                 case .ended:
                     hoverFraction = nil
+                }
+            }
+            .onChange(of: audioEngine.currentTime) { _, newTime in
+                if audioEngine.playbackState == .playing && audioEngine.duration > 0 {
+                    appState.updatePlayheadFollow(progress: newTime / audioEngine.duration)
                 }
             }
         }

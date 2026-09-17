@@ -12,11 +12,13 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
     public let formatName: String
     public let sampleRate: Double
     public let channelCount: Int
+    public let relativePath: String?
 
     public init(
         id: UUID = UUID(),
         url: URL,
         filename: String? = nil,
+        relativePath: String? = nil,
         title: String? = nil,
         artist: String? = nil,
         duration: TimeInterval = 0,
@@ -28,6 +30,7 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
         self.id = id
         self.url = url
         self.filename = filename ?? url.lastPathComponent
+        self.relativePath = relativePath
         self.title = title ?? url.deletingPathExtension().lastPathComponent
         self.artist = artist ?? "Unknown Artist"
         self.duration = duration
@@ -61,7 +64,7 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
         return formatter.string(fromByteCount: fileSize)
     }
 
-    public static func quick(from url: URL) -> AudioTrack {
+    public static func quick(from url: URL, relativePath: String? = nil) -> AudioTrack {
         _ = url.startAccessingSecurityScopedResource()
         let filename = url.lastPathComponent
         let attributes = (try? FileManager.default.attributesOfItem(atPath: url.path)) ?? [:]
@@ -84,6 +87,7 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
         return AudioTrack(
             url: url,
             filename: filename,
+            relativePath: relativePath,
             title: title,
             artist: "...",
             duration: duration,
@@ -94,7 +98,7 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
         )
     }
 
-    public static func load(from url: URL, id: UUID = UUID()) async -> AudioTrack {
+    public static func load(from url: URL, id: UUID = UUID(), relativePath: String? = nil) async -> AudioTrack {
         _ = url.startAccessingSecurityScopedResource()
         let filename = url.lastPathComponent
         let attributes = (try? FileManager.default.attributesOfItem(atPath: url.path)) ?? [:]
@@ -149,6 +153,7 @@ public struct AudioTrack: Identifiable, Hashable, Sendable {
             id: id,
             url: url,
             filename: filename,
+            relativePath: relativePath,
             title: title,
             artist: artist,
             duration: duration,

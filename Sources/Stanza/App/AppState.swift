@@ -10,6 +10,12 @@ public enum LeftPaneOrientation: String, CaseIterable, Sendable {
 
 @MainActor
 public final class AppState: ObservableObject {
+    public static let userDefaultsLastOpenedFolderKey = "stanza.lastOpenedFolderURL"
+    public static let userDefaultsLastSelectedTrackKey = "stanza.lastSelectedTrackURL"
+    public static let userDefaultsVisualizerModeKey = "stanza.visualizerMode"
+    public static let userDefaultsLeftPaneOrientationKey = "stanza.leftPaneOrientation"
+    public static let userDefaultsIsRecursiveScanKey = "stanza.isRecursiveScan"
+
     // Current folder being explored
     @Published public var currentFolderURL: URL?
     @Published public var parentFolderURL: URL?
@@ -18,15 +24,52 @@ public final class AppState: ObservableObject {
     @Published public var quickAccessFolders: [FolderItem] = []
 
     // Explorer Layout & Tree State
-    @Published public var leftPaneOrientation: LeftPaneOrientation = .horizontal
+    @Published public var leftPaneOrientation: LeftPaneOrientation = .horizontal {
+        didSet {
+            UserDefaults.standard.set(leftPaneOrientation.rawValue, forKey: Self.userDefaultsLeftPaneOrientationKey)
+        }
+    }
     @Published public var expandedFolderURLs: Set<String> = []
+    @Published public var isRecursiveScan: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isRecursiveScan, forKey: Self.userDefaultsIsRecursiveScanKey)
+        }
+    }
 
     // Playable tracks in the current folder
     @Published public var queue: [AudioTrack] = []
-    @Published public var selectedTrackID: UUID?
-    @Published public var visualizerMode: VisualizerMode = .stereoWaveform
+    @Published public var selectedTrackID: UUID? {
+        didSet {
+            if let id = selectedTrackID, let track = queue.first(where: { $0.id == id }) {
+                UserDefaults.standard.set(track.url.path, forKey: Self.userDefaultsLastSelectedTrackKey)
+            }
+        }
+    }
+    @Published public var visualizerMode: VisualizerMode = .stereoWaveform {
+        didSet {
+            UserDefaults.standard.set(visualizerMode.rawValue, forKey: Self.userDefaultsVisualizerModeKey)
+        }
+    }
     @Published public var isLoadingTracks: Bool = false
     @Published public var statusMessage: String = "Ready"
+    public var hasHandledExternalOpen: Bool = false
+
+    // Waveform Inspection & Zoom State
+    @Published public var waveformZoomLevel: CGFloat = 1.0 {
+        didSet {
+            let clamped = min(max(1.0, waveformZoomLevel), 32.0)
+            if waveformZoomLevel != clamped {
+                waveformZoomLevel = clamped
+            }
+            clampViewportOffset()
+        }
+    }
+    @Published public var waveformViewportOffset: Double = 0.0 {
+        didSet {
+            clampViewportOffset()
+        }
+    }
+    @Published public var isAutoFollowingPlayhead: Bool = true
 
     public let audioEngine = AudioEngineController.shared
 
@@ -38,6 +81,20 @@ public final class AppState: ObservableObject {
         audioEngine.onTrackCompleted = { [weak self] in
             self?.playNext(userInitiated: false)
         }
+
+        // Restore persistent UI preferences
+        if let modeStr = UserDefaults.standard.string(forKey: Self.userDefaultsVisualizerModeKey),
+           let mode = VisualizerMode(rawValue: modeStr) {
+            self.visualizerMode = mode
+        }
+        if let orientStr = UserDefaults.standard.string(forKey: Self.userDefaultsLeftPaneOrientationKey),
+           let orient = LeftPaneOrientation(rawValue: orientStr) {
+            self.leftPaneOrientation = orient
+        }
+        if UserDefaults.standard.object(forKey: Self.userDefaultsIsRecursiveScanKey) != nil {
+            self.isRecursiveScan = UserDefaults.standard.bool(forKey: Self.userDefaultsIsRecursiveScanKey)
+        }
+
         setupQuickAccess()
     }
 
@@ -65,7 +122,33 @@ public final class AppState: ObservableObject {
         return queue.firstIndex(where: { $0.id == current.id })
     }
 
-    public func navigateToFolder(_ folderURL: URL, selectTrackURL: URL? = nil, autoPlay: Bool = false) {
+    public func restoreLastSession() {
+        guard !hasHandledExternalOpen else { return }
+
+        let fm = FileManager.default
+        if let savedPath = UserDefaults.standard.string(forKey: Self.userDefaultsLastOpenedFolderKey) {
+            let savedURL = URL(fileURLWithPath: savedPath)
+            var isDir: ObjCBool = false
+            if fm.fileExists(atPath: savedURL.path, isDirectory: &isDir), isDir.boolValue {
+                var trackURL: URL? = nil
+                if let savedTrackPath = UserDefaults.standard.string(forKey: Self.userDefaultsLastSelectedTrackKey) {
+                    let candidate = URL(fileURLWithPath: savedTrackPath)
+                    if fm.fileExists(atPath: candidate.path) {
+                        trackURL = candidate
+                    }
+                }
+                navigateToFolder(savedURL, selectTrackURL: trackURL, autoPlay: false)
+                return
+            }
+        }
+
+        // Fallback to Music or first quick access folder on fresh launch
+        if let fallbackURL = quickAccessFolders.first(where: { $0.name == "Music" })?.url ?? quickAccessFolders.first?.url {
+            navigateToFolder(fallbackURL, autoPlay: false)
+        }
+    }
+
+    public func navigateToFolder(_ folderURL: URL, selectTrackURL: URL? = nil, autoPlay: Bool = false, recursive: Bool? = nil) {
         let standardURL = folderURL.resolvingSymlinksInPath().standardizedFileURL
         _ = standardURL.startAccessingSecurityScopedResource()
 
@@ -75,7 +158,12 @@ public final class AppState: ObservableObject {
             return
         }
 
+        if let rec = recursive {
+            self.isRecursiveScan = rec
+        }
+
         self.currentFolderURL = standardURL
+        UserDefaults.standard.set(standardURL.path, forKey: Self.userDefaultsLastOpenedFolderKey)
 
         // Determine parent folder
         let parent = standardURL.deletingLastPathComponent().resolvingSymlinksInPath().standardizedFileURL
@@ -107,17 +195,25 @@ public final class AppState: ObservableObject {
             self.childFolders = []
         }
 
-        // Scan playable audio files in currentFolder
-        let audioURLs = scanAudioFilesInFolder(standardURL)
-        let tracks = audioURLs.map { AudioTrack.quick(from: $0) }
+        // Scan playable audio files in currentFolder (flat or recursive)
+        let scannedItems = scanAudioItemsInFolder(standardURL)
+        let tracks = scannedItems.map { AudioTrack.quick(from: $0.url, relativePath: $0.relativePath) }
         self.queue = tracks
-        self.statusMessage = "\(tracks.count) audio file(s) in \(standardURL.lastPathComponent)"
+        if isRecursiveScan {
+            self.statusMessage = "\(tracks.count) file(s) across subdirectories in \(standardURL.lastPathComponent)"
+        } else {
+            self.statusMessage = "\(tracks.count) audio file(s) in \(standardURL.lastPathComponent)"
+        }
 
         // Track selection / playback
         if let target = selectTrackURL {
             let targetPath = target.resolvingSymlinksInPath().standardizedFileURL.path
             if let matched = tracks.first(where: { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == targetPath }) {
-                self.playTrack(matched)
+                if autoPlay {
+                    self.playTrack(matched)
+                } else {
+                    self.selectedTrackID = matched.id
+                }
             } else if autoPlay, let first = tracks.first {
                 self.playTrack(first)
             }
@@ -134,7 +230,7 @@ public final class AppState: ObservableObject {
         let currentTracks = self.queue
         Task.detached(priority: .utility) {
             for track in currentTracks {
-                let enriched = await AudioTrack.load(from: track.url, id: track.id)
+                let enriched = await AudioTrack.load(from: track.url, id: track.id, relativePath: track.relativePath)
                 await MainActor.run {
                     if let index = self.queue.firstIndex(where: { $0.id == track.id }) {
                         self.queue[index] = enriched
@@ -170,20 +266,115 @@ public final class AppState: ObservableObject {
         leftPaneOrientation = (leftPaneOrientation == .horizontal) ? .vertical : .horizontal
     }
 
-    public func scanAudioFilesInFolder(_ folderURL: URL) -> [URL] {
+    public func toggleRecursiveScan() {
+        isRecursiveScan.toggle()
+        if let current = currentFolderURL {
+            navigateToFolder(current, selectTrackURL: audioEngine.currentTrack?.url, autoPlay: false)
+        }
+    }
+
+    public func zoomIn() {
+        waveformZoomLevel = min(32.0, waveformZoomLevel * 1.5)
+    }
+
+    public func zoomOut() {
+        waveformZoomLevel = max(1.0, waveformZoomLevel / 1.5)
+    }
+
+    public func resetZoom() {
+        waveformZoomLevel = 1.0
+        waveformViewportOffset = 0.0
+    }
+
+    public func toggleAutoFollowPlayhead() {
+        isAutoFollowingPlayhead.toggle()
+    }
+
+    public func clampViewportOffset() {
+        let visibleFraction = 1.0 / Double(waveformZoomLevel)
+        let maxOffset = max(0.0, 1.0 - visibleFraction)
+        if waveformViewportOffset < 0.0 {
+            waveformViewportOffset = 0.0
+        } else if waveformViewportOffset > maxOffset {
+            waveformViewportOffset = maxOffset
+        }
+    }
+
+    public func updatePlayheadFollow(progress: Double) {
+        guard isAutoFollowingPlayhead && waveformZoomLevel > 1.0 else { return }
+        let visibleFraction = 1.0 / Double(waveformZoomLevel)
+        // Center the playhead in the visible window
+        let targetOffset = progress - (visibleFraction / 2.0)
+        let maxOffset = max(0.0, 1.0 - visibleFraction)
+        waveformViewportOffset = min(max(0.0, targetOffset), maxOffset)
+    }
+
+    public struct ScannedTrackItem: Sendable {
+        public let url: URL
+        public let relativePath: String?
+
+        public init(url: URL, relativePath: String? = nil) {
+            self.url = url
+            self.relativePath = relativePath
+        }
+    }
+
+    public func scanAudioItemsInFolder(_ folderURL: URL, recursive: Bool? = nil) -> [ScannedTrackItem] {
+        let isRec = recursive ?? self.isRecursiveScan
         let standardURL = folderURL.resolvingSymlinksInPath().standardizedFileURL
         let fm = FileManager.default
-        guard let items = try? fm.contentsOfDirectory(at: standardURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
-            return []
-        }
 
-        return items
-            .map { $0.resolvingSymlinksInPath().standardizedFileURL }
-            .filter { url in
-                guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return false }
-                return AppState.supportedAudioExtensions.contains(url.pathExtension.lowercased())
+        if !isRec {
+            guard let items = try? fm.contentsOfDirectory(at: standardURL, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+                return []
             }
-            .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+            return items
+                .map { $0.resolvingSymlinksInPath().standardizedFileURL }
+                .filter { url in
+                    guard (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { return false }
+                    return AppState.supportedAudioExtensions.contains(url.pathExtension.lowercased())
+                }
+                .sorted { $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending }
+                .map { ScannedTrackItem(url: $0, relativePath: $0.lastPathComponent) }
+        } else {
+            guard let enumerator = fm.enumerator(
+                at: standardURL,
+                includingPropertiesForKeys: [.isRegularFileKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return []
+            }
+
+            var scanned: [ScannedTrackItem] = []
+            let basePath = standardURL.path
+
+            for case let fileURL as URL in enumerator {
+                let resolved = fileURL.resolvingSymlinksInPath().standardizedFileURL
+                guard (try? resolved.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else { continue }
+                guard AppState.supportedAudioExtensions.contains(resolved.pathExtension.lowercased()) else { continue }
+
+                var rel = resolved.path
+                if rel.hasPrefix(basePath) {
+                    rel = String(rel.dropFirst(basePath.count))
+                    if rel.hasPrefix("/") {
+                        rel = String(rel.dropFirst())
+                    }
+                }
+                scanned.append(ScannedTrackItem(url: resolved, relativePath: rel))
+            }
+
+            return scanned.sorted {
+                ($0.relativePath ?? $0.url.lastPathComponent).localizedStandardCompare($1.relativePath ?? $1.url.lastPathComponent) == .orderedAscending
+            }
+        }
+    }
+
+    public func scanAudioFilesInFolder(_ folderURL: URL) -> [URL] {
+        scanAudioItemsInFolder(folderURL, recursive: false).map(\.url)
+    }
+
+    public func scanAudioFilesInFolder(_ folderURL: URL, recursive: Bool) -> [URL] {
+        scanAudioItemsInFolder(folderURL, recursive: recursive).map(\.url)
     }
 
     public func openAndPlayURLs(_ urls: [URL]) {
