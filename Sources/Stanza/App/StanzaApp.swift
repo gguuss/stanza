@@ -1,41 +1,61 @@
 import SwiftUI
 import AppKit
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    weak var appState: AppState?
-
-    func application(_ sender: NSApplication, openFiles filenames: [String]) {
-        let urls = filenames.map { URL(fileURLWithPath: $0) }
-        Task { @MainActor in
-            self.appState?.hasHandledExternalOpen = true
-            self.appState?.addURLs(urls, autoPlayFirst: false)
-            if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
-                window.makeKeyAndOrderFront(nil)
-            }
+    static weak var shared: AppDelegate?
+    weak var appState: AppState? {
+        didSet {
+            processPendingURLsIfNeeded()
         }
-        sender.reply(toOpenOrPrint: .success)
+    }
+    private(set) var pendingURLs: [URL] = []
+
+    static var hasPendingURLs: Bool {
+        AppDelegate.shared?.pendingURLs.isEmpty == false
     }
 
-    func application(_ sender: NSApplication, openFile filename: String) -> Bool {
+    override init() {
+        super.init()
+        AppDelegate.shared = self
+    }
+
+    nonisolated func application(_ sender: NSApplication, openFiles filenames: [String]) {
+        let urls = filenames.map { URL(fileURLWithPath: $0) }
+        MainActor.assumeIsolated {
+            self.handleOpenURLs(urls, sender: sender)
+            sender.reply(toOpenOrPrint: .success)
+        }
+    }
+
+    nonisolated func application(_ sender: NSApplication, openFile filename: String) -> Bool {
         let url = URL(fileURLWithPath: filename)
-        Task { @MainActor in
-            self.appState?.hasHandledExternalOpen = true
-            self.appState?.addURLs([url], autoPlayFirst: false)
-            if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
-                window.makeKeyAndOrderFront(nil)
-            }
+        MainActor.assumeIsolated {
+            self.handleOpenURLs([url], sender: sender)
         }
         return true
     }
 
-    func application(_ application: NSApplication, open urls: [URL]) {
-        Task { @MainActor in
-            self.appState?.hasHandledExternalOpen = true
-            self.appState?.addURLs(urls, autoPlayFirst: false)
-            if let window = application.windows.first(where: { $0.title == "Stanza" }) ?? application.windows.first {
-                window.makeKeyAndOrderFront(nil)
-            }
+    nonisolated func application(_ application: NSApplication, open urls: [URL]) {
+        MainActor.assumeIsolated {
+            self.handleOpenURLs(urls, sender: application)
         }
+    }
+
+    private func handleOpenURLs(_ urls: [URL], sender: NSApplication) {
+        pendingURLs.append(contentsOf: urls)
+        processPendingURLsIfNeeded()
+        if let window = sender.windows.first(where: { $0.title == "Stanza" }) ?? sender.windows.first {
+            window.makeKeyAndOrderFront(nil)
+        }
+    }
+
+    func processPendingURLsIfNeeded() {
+        guard let appState = appState, !pendingURLs.isEmpty else { return }
+        let urls = pendingURLs
+        pendingURLs = []
+        appState.hasHandledExternalOpen = true
+        appState.addURLs(urls, autoPlayFirst: true)
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -51,7 +71,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 @main
 struct StanzaApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @StateObject private var appState = AppState()
+    @StateObject private var appState: AppState
+
+    init() {
+        let state = AppState()
+        _appState = StateObject(wrappedValue: state)
+        AppDelegate.shared?.appState = state
+    }
 
     var body: some Scene {
         Window("Stanza", id: "main") {
@@ -63,7 +89,7 @@ struct StanzaApp: App {
                 }
                 .onOpenURL { url in
                     appState.hasHandledExternalOpen = true
-                    appState.addURLs([url], autoPlayFirst: false)
+                    appState.addURLs([url], autoPlayFirst: true)
                 }
         }
         .windowStyle(.titleBar)

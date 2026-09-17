@@ -132,7 +132,7 @@ public final class AppState: ObservableObject {
     }
 
     public func restoreLastSession() {
-        guard !hasHandledExternalOpen else { return }
+        guard !hasHandledExternalOpen && !AppDelegate.hasPendingURLs else { return }
 
         let fm = FileManager.default
         if let savedPath = UserDefaults.standard.string(forKey: Self.userDefaultsLastOpenedFolderKey) {
@@ -221,6 +221,14 @@ public final class AppState: ObservableObject {
                 } else {
                     self.selectedTrackID = matched.id
                 }
+            } else if targetPath.hasPrefix(standardURL.path) {
+                let directTrack = AudioTrack.quick(from: target)
+                self.queue.insert(directTrack, at: 0)
+                if autoPlay {
+                    self.playTrack(directTrack)
+                } else {
+                    self.selectedTrackID = directTrack.id
+                }
             } else if autoPlay, let first = tracks.first {
                 self.playTrack(first)
             }
@@ -276,7 +284,8 @@ public final class AppState: ObservableObject {
     public func toggleRecursiveScan() {
         let newRec = !isRecursiveScan
         if let current = currentFolderURL {
-            navigateToFolder(current, selectTrackURL: audioEngine.currentTrack?.url, autoPlay: false, recursive: newRec)
+            let activeTrackURL = queue.first(where: { $0.id == audioEngine.currentTrack?.id })?.url
+            navigateToFolder(current, selectTrackURL: activeTrackURL, autoPlay: false, recursive: newRec)
         } else {
             isRecursiveScan = newRec
         }
@@ -387,23 +396,12 @@ public final class AppState: ObservableObject {
     }
 
     public func openAndPlayURLs(_ urls: [URL]) {
-        guard let firstURL = urls.first else { return }
-        _ = firstURL.startAccessingSecurityScopedResource()
-
-        let fm = FileManager.default
-        var isDir: ObjCBool = false
-        if fm.fileExists(atPath: firstURL.path, isDirectory: &isDir) {
-            if isDir.boolValue {
-                navigateToFolder(firstURL, autoPlay: true)
-            } else {
-                let containingFolder = firstURL.deletingLastPathComponent()
-                navigateToFolder(containingFolder, selectTrackURL: firstURL, autoPlay: true)
-            }
-        }
+        addURLs(urls, autoPlayFirst: true)
     }
 
-    public func addURLs(_ urls: [URL], autoPlayFirst: Bool = false) {
+    public func addURLs(_ urls: [URL], autoPlayFirst: Bool = true) {
         guard let firstURL = urls.first else { return }
+        _ = firstURL.startAccessingSecurityScopedResource()
         let fm = FileManager.default
         var isDir: ObjCBool = false
         if fm.fileExists(atPath: firstURL.path, isDirectory: &isDir) {

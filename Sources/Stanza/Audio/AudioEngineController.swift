@@ -376,6 +376,15 @@ public final class AudioEngineController: ObservableObject {
         AudioAnalyzer.shared.reset()
     }
 
+    public func resetForTesting() {
+        stop()
+        currentTrack = nil
+        currentAudioFile = nil
+        totalFrames = 0
+        duration = 0
+        currentTime = 0
+    }
+
     public func seek(to time: TimeInterval, autoPlay: Bool = false) {
         guard let baseFile = currentAudioFile, totalFrames > 0 else { return }
 

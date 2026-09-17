@@ -42,7 +42,7 @@ public struct MainPlayerView: View {
             appState.openAndPlayURLs(urls)
         }
         .onAppear {
-            if appState.currentFolderURL == nil {
+            if appState.currentFolderURL == nil && !appState.hasHandledExternalOpen && !AppDelegate.hasPendingURLs {
                 appState.restoreLastSession()
             }
         }

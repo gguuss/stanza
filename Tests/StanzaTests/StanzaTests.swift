@@ -3,16 +3,23 @@ import AVFoundation
 @testable import Stanza
 
 final class StanzaTests: XCTestCase {
+    @MainActor
     override func setUp() {
         super.setUp()
         clearUserDefaults()
+        AudioEngineController.shared.resetForTesting()
+        AppDelegate.shared = nil
     }
 
+    @MainActor
     override func tearDown() {
+        AudioEngineController.shared.resetForTesting()
+        AppDelegate.shared = nil
         clearUserDefaults()
         super.tearDown()
     }
 
+    @MainActor
     private func clearUserDefaults() {
         let keys = [
             AudioEngineController.userDefaultsVolumeKey,
@@ -706,6 +713,79 @@ final class StanzaTests: XCTestCase {
         XCTAssertGreaterThan(highAvgFreq, lowAvgFreq)
         XCTAssertLessThan(lowAvgFreq, 0.4)
         XCTAssertGreaterThan(highAvgFreq, 0.6)
+    }
+
+    @MainActor
+    func testOpenFileImmediatelyPlays() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sampleRate: Double = 44100.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let wavURL = tempDir.appendingPathComponent("immediate_play.wav")
+
+        let frames: AVAudioFrameCount = 22050
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buffer.frameLength = frames
+        for i in 0..<Int(frames) {
+            let s = Float(sin(2.0 * .pi * 440.0 * Double(i) / sampleRate) * 0.5)
+            buffer.floatChannelData?[0][i] = s
+            buffer.floatChannelData?[1][i] = s
+        }
+        do {
+            let audioFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+            try audioFile.write(from: buffer)
+        }
+
+        let appState = AppState()
+        // Default autoPlayFirst is true
+        appState.addURLs([wavURL])
+
+        XCTAssertEqual(appState.audioEngine.playbackState, .playing)
+        XCTAssertEqual(appState.audioEngine.currentTrack?.url.resolvingSymlinksInPath().standardizedFileURL.path,
+                       wavURL.resolvingSymlinksInPath().standardizedFileURL.path)
+        XCTAssertEqual(appState.selectedTrackID, appState.audioEngine.currentTrack?.id)
+        XCTAssertTrue(appState.queue.contains(where: { $0.url.resolvingSymlinksInPath().standardizedFileURL.path == wavURL.resolvingSymlinksInPath().standardizedFileURL.path }))
+    }
+
+    @MainActor
+    func testAppDelegateBuffersPendingFiles() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let sampleRate: Double = 44100.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let wavURL = tempDir.appendingPathComponent("buffered_open.wav")
+
+        let frames: AVAudioFrameCount = 22050
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames)!
+        buffer.frameLength = frames
+        for i in 0..<Int(frames) {
+            let s = Float(sin(2.0 * .pi * 440.0 * Double(i) / sampleRate) * 0.5)
+            buffer.floatChannelData?[0][i] = s
+            buffer.floatChannelData?[1][i] = s
+        }
+        do {
+            let audioFile = try AVAudioFile(forWriting: wavURL, settings: format.settings)
+            try audioFile.write(from: buffer)
+        }
+
+        let appDelegate = AppDelegate()
+        // Simulate openFiles from macOS before appState is wired up
+        _ = appDelegate.application(NSApplication.shared, openFile: wavURL.path)
+        let standardWavPath = wavURL.resolvingSymlinksInPath().standardizedFileURL.path
+        XCTAssertTrue(appDelegate.pendingURLs.contains(where: { $0.resolvingSymlinksInPath().standardizedFileURL.path == standardWavPath }))
+
+        let appState = AppState()
+        // Connect appState (which triggers processPendingURLsIfNeeded in didSet)
+        appDelegate.appState = appState
+
+        XCTAssertTrue(appState.hasHandledExternalOpen)
+        XCTAssertEqual(appState.audioEngine.playbackState, .playing)
+        XCTAssertEqual(appState.audioEngine.currentTrack?.url.resolvingSymlinksInPath().standardizedFileURL.path,
+                       standardWavPath)
     }
 }
 
