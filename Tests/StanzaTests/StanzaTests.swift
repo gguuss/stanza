@@ -651,18 +651,26 @@ final class StanzaTests: XCTestCase {
     @MainActor
     func testWaveformColorSchemesAndFrequencyGradient() async throws {
         // 1. Verify all color schemes exist and have correct titles
-        XCTAssertEqual(WaveformColorScheme.allCases.count, 4)
-        let schemes: [WaveformColorScheme] = [.classic, .purpleMagenta, .blueViolet, .amberLightBlue]
+        XCTAssertEqual(WaveformColorScheme.allCases.count, 5)
+        let schemes: [WaveformColorScheme] = [.classic, .purpleMagenta, .blueViolet, .amberLightBlue, .rgb]
         for scheme in schemes {
             XCTAssertFalse(scheme.shortTitle.isEmpty)
         }
 
         // 2. Verify gradient interpolation gives different colors at opposite frequency ends
-        for scheme in [WaveformColorScheme.purpleMagenta, .blueViolet, .amberLightBlue] {
+        for scheme in [WaveformColorScheme.purpleMagenta, .blueViolet, .amberLightBlue, .rgb] {
             let lowColor = scheme.color(for: 0.0)
             let highColor = scheme.color(for: 1.0)
             XCTAssertNotEqual(lowColor, highColor)
         }
+
+        // 2b. Verify RGB tri-band color progression (Red -> Green/Yellow -> Blue)
+        let rgbLow = WaveformColorScheme.rgb.color(for: 0.0)
+        let rgbMid = WaveformColorScheme.rgb.color(for: 0.5)
+        let rgbHigh = WaveformColorScheme.rgb.color(for: 1.0)
+        XCTAssertNotEqual(rgbLow, rgbMid)
+        XCTAssertNotEqual(rgbMid, rgbHigh)
+        XCTAssertNotEqual(rgbLow, rgbHigh)
 
         // 3. Test frequency extraction with low-frequency vs high-frequency synthetic audio
         let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

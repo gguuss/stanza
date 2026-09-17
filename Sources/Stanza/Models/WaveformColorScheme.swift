@@ -6,6 +6,7 @@ public enum WaveformColorScheme: String, CaseIterable, Identifiable, Sendable {
     case purpleMagenta = "Purple & Magenta"
     case blueViolet = "Blue & Violet"
     case amberLightBlue = "Amber & Light Blue"
+    case rgb = "RGB (Red, Green, Blue)"
 
     public var id: String { rawValue }
 
@@ -15,6 +16,7 @@ public enum WaveformColorScheme: String, CaseIterable, Identifiable, Sendable {
         case .purpleMagenta: return "Purple / Magenta"
         case .blueViolet: return "Blue / Violet"
         case .amberLightBlue: return "Amber / Light Blue"
+        case .rgb: return "RGB"
         }
     }
 
@@ -44,6 +46,41 @@ public enum WaveformColorScheme: String, CaseIterable, Identifiable, Sendable {
             let r = 1.00 + t * (0.00 - 1.00)
             let g = 0.47 + t * (0.90 - 0.47)
             let b = 0.00 + t * (1.00 - 0.00)
+            return Color(red: r, green: g, blue: b)
+
+        case .rgb:
+            // Low Frequencies (Bass, sub-bass, kick drums): Red
+            // Mid Frequencies (Vocals, lead melodies, guitars, synths): Yellow into Pure Green
+            // High Frequencies (Hi-hats, cymbals, snares, risers): Cyan into Bright Blue
+            let r: Double
+            let g: Double
+            let b: Double
+            if t < 0.20 {
+                let s = t / 0.20
+                r = 0.96 + s * (0.98 - 0.96)
+                g = 0.14 + s * (0.28 - 0.14)
+                b = 0.14 + s * (0.10 - 0.14)
+            } else if t < 0.35 {
+                let s = (t - 0.20) / 0.15
+                r = 0.98 + s * (0.96 - 0.98)
+                g = 0.28 + s * (0.85 - 0.28)
+                b = 0.10 + s * (0.10 - 0.10)
+            } else if t < 0.50 {
+                let s = (t - 0.35) / 0.15
+                r = 0.96 + s * (0.12 - 0.96)
+                g = 0.85 + s * (0.92 - 0.85)
+                b = 0.10 + s * (0.28 - 0.10)
+            } else if t < 0.70 {
+                let s = (t - 0.50) / 0.20
+                r = 0.12 + s * (0.08 - 0.12)
+                g = 0.92 + s * (0.82 - 0.92)
+                b = 0.28 + s * (0.92 - 0.28)
+            } else {
+                let s = min(1.0, (t - 0.70) / 0.30)
+                r = 0.08 + s * (0.20 - 0.08)
+                g = 0.82 + s * (0.48 - 0.82)
+                b = 0.92 + s * (1.00 - 0.92)
+            }
             return Color(red: r, green: g, blue: b)
         }
     }
