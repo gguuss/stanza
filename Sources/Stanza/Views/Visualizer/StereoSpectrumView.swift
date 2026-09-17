@@ -57,76 +57,82 @@ public struct StereoSpectrumView: View {
                         .padding(.bottom, 6)
                     }
 
-                    // High-Density Spectrum Bars (Dual L/R with 128 bands each)
-                    Canvas { context, size in
-                        let w = size.width
-                        let h = size.height
-                        let half = h / 2.0
-                        let count = leftBands.count
-                        guard count > 0 else { return }
+                    // GPU-Accelerated Metal Dual L/R Spectrum (120 FPS) or Canvas Fallback
+                    if MetalSpectrumView.isMetalAvailable {
+                        MetalSpectrumView(mode: .stereoSplit)
+                            .padding(.vertical, 18)
+                    } else {
+                        // High-Density Spectrum Bars (Dual L/R with 128 bands each)
+                        Canvas { context, size in
+                            let w = size.width
+                            let h = size.height
+                            let half = h / 2.0
+                            let count = leftBands.count
+                            guard count > 0 else { return }
 
-                        let gap: CGFloat = 1.0
-                        let totalGaps = CGFloat(count - 1) * gap
-                        let barWidth = max(1.5, (w - totalGaps) / CGFloat(count))
-                        let maxBarH = half - 18
+                            let gap: CGFloat = 1.0
+                            let totalGaps = CGFloat(count - 1) * gap
+                            let barWidth = max(1.5, (w - totalGaps) / CGFloat(count))
+                            let maxBarH = half - 18
 
-                        // Left Channel Gradients (Cyan -> Electric Blue)
-                        let leftGradient = Gradient(stops: [
-                            .init(color: Color(red: 0.10, green: 0.85, blue: 0.95), location: 0.0),
-                            .init(color: Color(red: 0.05, green: 0.40, blue: 0.80), location: 1.0)
-                        ])
+                            // Left Channel Gradients (Cyan -> Electric Blue)
+                            let leftGradient = Gradient(stops: [
+                                .init(color: Color(red: 0.10, green: 0.85, blue: 0.95), location: 0.0),
+                                .init(color: Color(red: 0.05, green: 0.40, blue: 0.80), location: 1.0)
+                            ])
 
-                        // Right Channel Gradients (Amber -> Neon Orange)
-                        let rightGradient = Gradient(stops: [
-                            .init(color: Color(red: 1.00, green: 0.65, blue: 0.15), location: 0.0),
-                            .init(color: Color(red: 0.85, green: 0.25, blue: 0.10), location: 1.0)
-                        ])
+                            // Right Channel Gradients (Amber -> Neon Orange)
+                            let rightGradient = Gradient(stops: [
+                                .init(color: Color(red: 1.00, green: 0.65, blue: 0.15), location: 0.0),
+                                .init(color: Color(red: 0.85, green: 0.25, blue: 0.10), location: 1.0)
+                            ])
 
-                        var leftCurve = Path()
-                        var rightCurve = Path()
+                            var leftCurve = Path()
+                            var rightCurve = Path()
 
-                        for i in 0..<count {
-                            let x = CGFloat(i) * (barWidth + gap)
-                            let centerX = x + barWidth * 0.5
+                            for i in 0..<count {
+                                let x = CGFloat(i) * (barWidth + gap)
+                                let centerX = x + barWidth * 0.5
 
-                            // Draw Left Channel (Top half, growing upwards from center divider)
-                            let lVal = CGFloat(leftBands[i])
-                            let lBarH = max(1.0, lVal * maxBarH)
-                            let lY = half - lBarH
+                                // Draw Left Channel (Top half, growing upwards from center divider)
+                                let lVal = CGFloat(leftBands[i])
+                                let lBarH = max(1.0, lVal * maxBarH)
+                                let lY = half - lBarH
 
-                            let lRect = CGRect(x: x, y: lY, width: barWidth, height: lBarH)
-                            context.fill(
-                                Path(roundedRect: lRect, cornerRadius: 0.8),
-                                with: .linearGradient(leftGradient, startPoint: CGPoint(x: x, y: lY), endPoint: CGPoint(x: x, y: half))
-                            )
+                                let lRect = CGRect(x: x, y: lY, width: barWidth, height: lBarH)
+                                context.fill(
+                                    Path(roundedRect: lRect, cornerRadius: 0.8),
+                                    with: .linearGradient(leftGradient, startPoint: CGPoint(x: x, y: lY), endPoint: CGPoint(x: x, y: half))
+                                )
 
-                            if i == 0 {
-                                leftCurve.move(to: CGPoint(x: centerX, y: lY))
-                            } else {
-                                leftCurve.addLine(to: CGPoint(x: centerX, y: lY))
+                                if i == 0 {
+                                    leftCurve.move(to: CGPoint(x: centerX, y: lY))
+                                } else {
+                                    leftCurve.addLine(to: CGPoint(x: centerX, y: lY))
+                                }
+
+                                // Draw Right Channel (Bottom half, growing downwards from center divider)
+                                let rVal = CGFloat(rightBands[i])
+                                let rBarH = max(1.0, rVal * maxBarH)
+                                let rY = half + 1
+
+                                let rRect = CGRect(x: x, y: rY, width: barWidth, height: rBarH)
+                                context.fill(
+                                    Path(roundedRect: rRect, cornerRadius: 0.8),
+                                    with: .linearGradient(rightGradient, startPoint: CGPoint(x: x, y: rY), endPoint: CGPoint(x: x, y: rY + rBarH))
+                                )
+
+                                if i == 0 {
+                                    rightCurve.move(to: CGPoint(x: centerX, y: rY + rBarH))
+                                } else {
+                                    rightCurve.addLine(to: CGPoint(x: centerX, y: rY + rBarH))
+                                }
                             }
 
-                            // Draw Right Channel (Bottom half, growing downwards from center divider)
-                            let rVal = CGFloat(rightBands[i])
-                            let rBarH = max(1.0, rVal * maxBarH)
-                            let rY = half + 1
-
-                            let rRect = CGRect(x: x, y: rY, width: barWidth, height: rBarH)
-                            context.fill(
-                                Path(roundedRect: rRect, cornerRadius: 0.8),
-                                with: .linearGradient(rightGradient, startPoint: CGPoint(x: x, y: rY), endPoint: CGPoint(x: x, y: rY + rBarH))
-                            )
-
-                            if i == 0 {
-                                rightCurve.move(to: CGPoint(x: centerX, y: rY + rBarH))
-                            } else {
-                                rightCurve.addLine(to: CGPoint(x: centerX, y: rY + rBarH))
-                            }
+                            // Stroke smooth accent curves across band boundaries
+                            context.stroke(leftCurve, with: .color(Color(red: 0.6, green: 0.95, blue: 1.0).opacity(0.8)), lineWidth: 1.0)
+                            context.stroke(rightCurve, with: .color(Color(red: 1.0, green: 0.85, blue: 0.4).opacity(0.8)), lineWidth: 1.0)
                         }
-
-                        // Stroke smooth accent curves across band boundaries
-                        context.stroke(leftCurve, with: .color(Color(red: 0.6, green: 0.95, blue: 1.0).opacity(0.8)), lineWidth: 1.0)
-                        context.stroke(rightCurve, with: .color(Color(red: 1.0, green: 0.85, blue: 0.4).opacity(0.8)), lineWidth: 1.0)
                     }
 
                     // Mini scrub seekbar at very bottom

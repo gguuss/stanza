@@ -97,6 +97,9 @@ public struct MarkersListPanelView: View {
                 Button("Export CUE Sheet (.cue)...") {
                     exportCueSheet()
                 }
+                Button("Export Rekordbox XML (.xml)...") {
+                    appState.exportRekordboxXML(forCurrentTrackOnly: true)
+                }
             } label: {
                 Image(systemName: "ellipsis.circle")
                     .font(.system(size: 12))

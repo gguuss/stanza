@@ -261,6 +261,12 @@ struct StanzaApp: App {
                     appState.exportCueSheet()
                 }
                 .disabled(appState.activeMarkers.isEmpty)
+
+                Button("Export Rekordbox XML...") {
+                    appState.exportRekordboxXML(forCurrentTrackOnly: false)
+                }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
+                .disabled(appState.queue.isEmpty && appState.audioEngine.currentTrack == nil)
             }
 
             // View Menu

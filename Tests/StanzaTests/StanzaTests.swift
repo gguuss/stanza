@@ -979,6 +979,153 @@ final class StanzaTests: XCTestCase {
 
         appState.audioEngine.stop()
     }
+
+    // MARK: - Milestone 1.5: DJ & Pro Audio Integrations Tests
+
+    func testRekordboxLocationFormatAndRGB() {
+        let exporter = RekordboxExporter.shared
+
+        // Test RGB conversion
+        let orange = exporter.hexToRGB("#FF9500")
+        XCTAssertEqual(orange.r, 255)
+        XCTAssertEqual(orange.g, 149)
+        XCTAssertEqual(orange.b, 0)
+
+        let green = exporter.hexToRGB("#30D158")
+        XCTAssertEqual(green.r, 48)
+        XCTAssertEqual(green.g, 209)
+        XCTAssertEqual(green.b, 88)
+
+        // Invalid fallback
+        let fallback = exporter.hexToRGB("invalid")
+        XCTAssertEqual(fallback.r, 255)
+        XCTAssertEqual(fallback.g, 149)
+        XCTAssertEqual(fallback.b, 0)
+
+        // Location formatting
+        let url = URL(fileURLWithPath: "/Users/Music/My Track & Song.mp3")
+        let loc = exporter.formatRekordboxLocation(url: url)
+        XCTAssertTrue(loc.hasPrefix("file://localhost/"))
+        XCTAssertTrue(loc.contains("My%20Track%20&%20Song.mp3") || loc.contains("My%20Track%20%26%20Song.mp3") || loc.contains("My Track"))
+    }
+
+    func testRekordboxXMLGenerationForSingleTrack() {
+        let exporter = RekordboxExporter.shared
+        let trackURL = URL(fileURLWithPath: "/Music/DJ Set/01_Intro.wav")
+        let track = AudioTrack(
+            url: trackURL,
+            title: "Intro & Drop",
+            artist: "DJ Artist <Live>",
+            duration: 240.5,
+            fileSize: 1024 * 1024 * 40,
+            formatName: "WAV",
+            sampleRate: 44100,
+            channelCount: 2
+        )
+
+        // 1 Hot Cue, 1 Loop Region
+        let cue1 = AudioMarker(name: "Hot Cue 1", timestamp: 15.0, colorHex: "#FF9500")
+        let loop1 = AudioMarker(name: "Main Loop", timestamp: 30.0, endTime: 60.0, colorHex: "#30D158")
+
+        let xml = exporter.generateXML(
+            tracks: [track],
+            markersByTrack: [trackURL: [cue1, loop1]],
+            playlistName: "Club Mix"
+        )
+
+        // Verify Rekordbox root and header
+        XCTAssertTrue(xml.contains("<DJ_PLAYLISTS Version=\"1.0.0\">"))
+        XCTAssertTrue(xml.contains("<PRODUCT Name=\"rekordbox\" Version=\"6.0.0\" Company=\"Pioneer DJ\"/>"))
+        XCTAssertTrue(xml.contains("<COLLECTION Entries=\"1\">"))
+
+        // Verify Track Node and XML escaping
+        XCTAssertTrue(xml.contains("Name=\"Intro &amp; Drop\""))
+        XCTAssertTrue(xml.contains("Artist=\"DJ Artist &lt;Live&gt;\""))
+        XCTAssertTrue(xml.contains("TotalTime=\"241\""))
+        XCTAssertTrue(xml.contains("Kind=\"WAV File\""))
+
+        // Verify Hot Cue: Type="0", Num="0"
+        XCTAssertTrue(xml.contains("POSITION_MARK Name=\"Hot Cue 1\" Type=\"0\" Start=\"15.000\" Num=\"0\""))
+        XCTAssertTrue(xml.contains("Red=\"255\" Green=\"149\" Blue=\"0\""))
+
+        // Verify Loop: Type="4", Start="30.000", End="60.000"
+        XCTAssertTrue(xml.contains("POSITION_MARK Name=\"Main Loop\" Type=\"4\" Start=\"30.000\" End=\"60.000\" Num=\"-1\""))
+        XCTAssertTrue(xml.contains("Red=\"48\" Green=\"209\" Blue=\"88\""))
+
+        // Verify Playlist tree
+        XCTAssertTrue(xml.contains("<NODE Name=\"Club Mix\" Type=\"1\" KeyType=\"0\" Entries=\"1\">"))
+        XCTAssertTrue(xml.contains("<TRACK Key=\"1\"/>"))
+    }
+
+    func testRekordboxHotCuesAndMemoryCuesOverflow() {
+        let exporter = RekordboxExporter.shared
+        let trackURL = URL(fileURLWithPath: "/Music/Track.mp3")
+        let track = AudioTrack(
+            url: trackURL,
+            title: "Many Cues",
+            artist: "Artist",
+            duration: 300.0,
+            fileSize: 1024,
+            formatName: "MP3",
+            sampleRate: 44100,
+            channelCount: 2
+        )
+
+        // Create 10 point markers: first 8 must be Hot Cues (0..7), 9 & 10 must be Memory Cues (-1)
+        var markers: [AudioMarker] = []
+        for i in 0..<10 {
+            markers.append(AudioMarker(name: "Cue \(i + 1)", timestamp: Double(i * 10)))
+        }
+
+        let xml = exporter.generateXML(tracks: [track], markersByTrack: [trackURL: markers])
+
+        for i in 0..<8 {
+            XCTAssertTrue(xml.contains("Num=\"\(i)\""), "Expected Hot Cue Num=\(i)")
+        }
+        // At least 2 memory cues with Num="-1"
+        let countMinusOne = xml.components(separatedBy: "Num=\"-1\"").count - 1
+        XCTAssertGreaterThanOrEqual(countMinusOne, 2)
+    }
+
+    func testAudioAnalyzerConcurrency() async {
+        let analyzer = AudioAnalyzer.shared
+        analyzer.reset()
+
+        let format = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2)!
+        let frameCount: AVAudioFrameCount = 1024
+
+        // Concurrent task simulating 120 FPS display render calls
+        let readTask = Task.detached(priority: .userInitiated) {
+            for _ in 0..<200 {
+                let data = analyzer.getCurrentData()
+                _ = data.spectrum.count
+                _ = data.levels.leftPeak
+                try? await Task.sleep(nanoseconds: 1_000_000) // 1ms
+            }
+        }
+
+        // Concurrent task simulating continuous audio buffer delivery
+        let writeTask = Task.detached(priority: .high) {
+            for i in 0..<100 {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else { continue }
+                buffer.frameLength = frameCount
+                for f in 0..<Int(frameCount) {
+                    let s = Float(sin(Double(f + i) * 0.1) * 0.5)
+                    buffer.floatChannelData?[0][f] = s
+                    buffer.floatChannelData?[1][f] = s
+                }
+                analyzer.processBuffer(buffer)
+                try? await Task.sleep(nanoseconds: 2_000_000) // 2ms
+            }
+        }
+
+        _ = await readTask.result
+        _ = await writeTask.result
+
+        let finalData = analyzer.getCurrentData()
+        XCTAssertEqual(finalData.spectrum.count, analyzer.bandCount)
+        XCTAssertGreaterThan(finalData.levels.leftPeak, 0.0)
+    }
 }
 
 

@@ -726,6 +726,52 @@ public final class AppState: ObservableObject {
         }
     }
 
+    public func exportRekordboxXML(forCurrentTrackOnly: Bool = false) {
+        guard let current = audioEngine.currentTrack else {
+            statusMessage = "No audio track loaded"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        let defaultName = forCurrentTrackOnly
+            ? current.url.deletingPathExtension().lastPathComponent + " - Rekordbox.xml"
+            : (currentFolderURL?.lastPathComponent ?? "Stanza_Playlist") + " - Rekordbox.xml"
+        panel.nameFieldStringValue = defaultName
+        panel.allowedContentTypes = [.init(filenameExtension: "xml") ?? .plainText]
+        panel.prompt = "Export Rekordbox XML"
+
+        if panel.runModal() == .OK, let saveURL = panel.url {
+            let tracksToExport: [AudioTrack] = forCurrentTrackOnly ? [current] : (queue.isEmpty ? [current] : queue)
+            var markersMap: [URL: [AudioMarker]] = [:]
+
+            for track in tracksToExport {
+                if track.url == current.url {
+                    markersMap[track.url] = activeMarkers
+                } else {
+                    markersMap[track.url] = MarkerStorage.shared.loadMarkers(for: track.url)
+                }
+            }
+
+            let playlistTitle = forCurrentTrackOnly
+                ? (current.title.isEmpty ? current.filename : current.title)
+                : (currentFolderURL?.lastPathComponent ?? "Stanza Playlist")
+
+            let xml = RekordboxExporter.shared.generateXML(
+                tracks: tracksToExport,
+                markersByTrack: markersMap,
+                playlistName: playlistTitle
+            )
+
+            do {
+                try xml.write(to: saveURL, atomically: true, encoding: .utf8)
+                statusMessage = "Exported Rekordbox XML with \(tracksToExport.count) tracks"
+            } catch {
+                statusMessage = "Failed to export Rekordbox XML: \(error.localizedDescription)"
+            }
+        }
+    }
+
     public func toggleMarkersPanel() {
         isMarkersPanelVisible.toggle()
     }

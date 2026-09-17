@@ -1,6 +1,7 @@
 import Foundation
 import Accelerate
 import AVFoundation
+import os.lock
 
 public struct StereoLevels: Sendable {
     public var leftPeak: Float = 0
@@ -38,8 +39,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
     private var leftBandsScratch: [Float]
     private var rightBandsScratch: [Float]
 
-    // Smooth state
-    private let lock = NSLock()
+    // Smooth state protected by low-overhead unfair lock
+    private var unfairLock = os_unfair_lock_s()
     private var smoothedBands: [Float]
     private var smoothedLeftBands: [Float]
     private var smoothedRightBands: [Float]
@@ -86,8 +87,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
     }
 
     public func reset() {
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
         leftHistory = [Float](repeating: 0, count: fftSize)
         rightHistory = [Float](repeating: 0, count: fftSize)
         smoothedBands = [Float](repeating: 0, count: bandCount)
@@ -163,8 +164,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
         aggregateBands(magnitudes: leftMagnitudes, sampleRate: sampleRate, outputBands: &leftBandsScratch)
         aggregateBands(magnitudes: rightMagnitudes, sampleRate: sampleRate, outputBands: &rightBandsScratch)
 
-        lock.lock()
-        defer { lock.unlock() }
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
 
         self.levels = StereoLevels(
             leftPeak: leftPeak,
@@ -274,8 +275,13 @@ public final class AudioAnalyzer: @unchecked Sendable {
     }
 
     public func getCurrentData() -> (spectrum: [Float], peaks: [Float], left: [Float], right: [Float], levels: StereoLevels) {
-        lock.lock()
-        defer { lock.unlock() }
-        return (smoothedBands, peakBands, smoothedLeftBands, smoothedRightBands, levels)
+        os_unfair_lock_lock(&unfairLock)
+        let s = smoothedBands
+        let p = peakBands
+        let l = smoothedLeftBands
+        let r = smoothedRightBands
+        let lev = levels
+        os_unfair_lock_unlock(&unfairLock)
+        return (s, p, l, r, lev)
     }
 }
