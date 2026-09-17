@@ -109,6 +109,38 @@ public struct VisualizerContainerView: View {
                     .help("Waveform Color Scheme")
                 }
 
+                // Markers & Slices Toggle Button
+                Button {
+                    appState.toggleMarkersPanel()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(appState.isMarkersPanelVisible ? Color.orange : Color.white.opacity(0.7))
+                        Text("Markers")
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundColor(appState.isMarkersPanelVisible ? .white : .white.opacity(0.8))
+                        if !appState.activeMarkers.isEmpty {
+                            Text("\(appState.activeMarkers.count)")
+                                .font(.system(size: 8, weight: .bold, design: .monospaced))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(Capsule().fill(Color.orange.opacity(0.85)))
+                        }
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(
+                        appState.isMarkersPanelVisible
+                            ? Color.orange.opacity(0.25)
+                            : Color.white.opacity(0.08)
+                    )
+                    .cornerRadius(4)
+                }
+                .buttonStyle(.plain)
+                .help("Toggle Markers & Slices Panel (Cmd+Shift+M)")
+
                 // Visualizer Mode Switcher
                 HStack(spacing: 2) {
                     ForEach(VisualizerMode.allCases) { mode in
@@ -147,22 +179,31 @@ public struct VisualizerContainerView: View {
                 Divider().background(Color.black.opacity(0.4))
             }
 
-            // Main Visualizer Area
-            Group {
-                switch selectedMode {
-                case .stereoWaveform:
-                    StereoWaveformView(
-                        appState: appState,
-                        waveformData: waveformData,
-                        isExtracting: isExtracting
-                    )
-                case .frequency:
-                    FrequencyAnalyzerView(audioEngine: audioEngine)
-                case .stereoSpectrum:
-                    StereoSpectrumView(audioEngine: audioEngine)
+            // Main Visualizer & Markers Panel Area
+            HStack(spacing: 0) {
+                Group {
+                    switch selectedMode {
+                    case .stereoWaveform:
+                        StereoWaveformView(
+                            appState: appState,
+                            waveformData: waveformData,
+                            isExtracting: isExtracting
+                        )
+                    case .frequency:
+                        FrequencyAnalyzerView(audioEngine: audioEngine)
+                    case .stereoSpectrum:
+                        StereoSpectrumView(audioEngine: audioEngine)
+                    }
+                }
+                .frame(minHeight: 140)
+
+                if appState.isMarkersPanelVisible {
+                    Divider().background(Color.black.opacity(0.5))
+                    MarkersListPanelView(appState: appState)
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
                 }
             }
-            .frame(minHeight: 140)
+            .animation(.easeInOut(duration: 0.2), value: appState.isMarkersPanelVisible)
         }
         .onChange(of: audioEngine.currentTrack?.url) { _, newURL in
             if let newURL = newURL {

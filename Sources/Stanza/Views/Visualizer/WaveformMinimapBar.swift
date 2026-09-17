@@ -126,6 +126,28 @@ public struct WaveformMinimapBar: View {
                     }
                 }
 
+                // Markers Overlay on Minimap
+                if appState.audioEngine.duration > 0 {
+                    ForEach(appState.activeMarkers) { marker in
+                        let startFrac = marker.timestamp / appState.audioEngine.duration
+                        if let end = marker.endTime, end > marker.timestamp {
+                            let endFrac = min(1.0, end / appState.audioEngine.duration)
+                            let mStartX = startFrac * width
+                            let mW = max(2, (endFrac - startFrac) * width)
+                            Rectangle()
+                                .fill(marker.color.opacity(0.35))
+                                .frame(width: mW, height: height)
+                                .position(x: mStartX + mW / 2.0, y: height / 2.0)
+                        } else {
+                            let mX = min(max(0, CGFloat(startFrac) * width), width)
+                            Rectangle()
+                                .fill(marker.color)
+                                .frame(width: 1.5, height: height)
+                                .position(x: mX, y: height / 2.0)
+                        }
+                    }
+                }
+
                 // Active Loop Range Overlay on Minimap
                 if let range = appState.audioEngine.loopRange, appState.audioEngine.duration > 0 {
                     let loopStartFrac = range.lowerBound / appState.audioEngine.duration

@@ -241,6 +241,9 @@ public struct StereoWaveformView: View {
                     }
                 }
 
+                // Active Markers and Region Overlay
+                markersOverlayView(width: width, height: height, offset: offset, visibleFraction: visibleFraction)
+
                 // Render Active Loop Selection or In-Progress Drag Selection
                 if isSelectingLoop, let startF = dragStartFraction, let currF = dragCurrentFraction {
                     let minF = min(startF, currF)
@@ -496,6 +499,108 @@ public struct StereoWaveformView: View {
                 .padding(.vertical, 1.5)
                 .background(RoundedRectangle(cornerRadius: 2).fill(color))
                 .position(x: max(startX + 20, endX), y: 12)
+
+            // "+ Save Region" button when loop is active
+            if !isLiveDrag && loopWidth > 75 {
+                Button(action: {
+                    appState.addRegionMarker(start: minF * audioEngine.duration, end: maxF * audioEngine.duration)
+                }) {
+                    HStack(spacing: 3) {
+                        Image(systemName: "bookmark.fill")
+                            .font(.system(size: 7.5))
+                        Text("+ Region")
+                            .font(.system(size: 8.5, weight: .bold))
+                    }
+                    .foregroundColor(.black)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: 3).fill(Color.white.opacity(0.88)))
+                }
+                .buttonStyle(.plain)
+                .position(x: centerX, y: 12)
+                .help("Save loop selection as a region marker")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func markersOverlayView(
+        width: CGFloat,
+        height: CGFloat,
+        offset: Double,
+        visibleFraction: Double
+    ) -> some View {
+        if audioEngine.duration > 0 {
+            ForEach(appState.activeMarkers) { marker in
+                if marker.isRegion, let end = marker.endTime {
+                    let startF = marker.timestamp / audioEngine.duration
+                    let endF = min(1.0, end / audioEngine.duration)
+                    let mStartX = CGFloat((startF - offset) / visibleFraction) * width
+                    let mEndX = CGFloat((endF - offset) / visibleFraction) * width
+                    let mW = max(2, mEndX - mStartX)
+
+                    if mEndX >= 0 && mStartX <= width {
+                        // Region background band
+                        Rectangle()
+                            .fill(marker.color.opacity(0.18))
+                            .frame(width: mW, height: height)
+                            .position(x: mStartX + mW / 2.0, y: height / 2.0)
+
+                        // Boundary lines
+                        Rectangle()
+                            .fill(marker.color.opacity(0.75))
+                            .frame(width: 1.5, height: height)
+                            .position(x: mStartX, y: height / 2.0)
+
+                        Rectangle()
+                            .fill(marker.color.opacity(0.75))
+                            .frame(width: 1.5, height: height)
+                            .position(x: mEndX, y: height / 2.0)
+
+                        // Region tag label
+                        if mW > 40 {
+                            HStack(spacing: 3) {
+                                Circle()
+                                    .fill(marker.color)
+                                    .frame(width: 5, height: 5)
+                                Text(marker.name)
+                                    .font(.system(size: 8.5, weight: .semibold))
+                                    .lineLimit(1)
+                            }
+                            .foregroundColor(.white)
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 2)
+                            .background(RoundedRectangle(cornerRadius: 3).fill(Color.black.opacity(0.65)))
+                            .position(x: min(max(mStartX + 25, mStartX + mW / 2.0), mEndX - 25), y: height - 12)
+                        }
+                    }
+                } else {
+                    let frac = marker.timestamp / audioEngine.duration
+                    let mX = CGFloat((frac - offset) / visibleFraction) * width
+
+                    if mX >= -10 && mX <= width + 10 {
+                        // Point marker vertical line
+                        Rectangle()
+                            .fill(marker.color)
+                            .frame(width: 1.5, height: height)
+                            .position(x: mX, y: height / 2.0)
+
+                        // Point marker flag head
+                        HStack(spacing: 2) {
+                            Image(systemName: "bookmark.fill")
+                                .font(.system(size: 7.5))
+                            Text(marker.name)
+                                .font(.system(size: 8.5, weight: .bold))
+                                .lineLimit(1)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(RoundedRectangle(cornerRadius: 3).fill(marker.color.opacity(0.85)))
+                        .position(x: min(max(30, mX + 22), width - 30), y: 12)
+                    }
+                }
+            }
         }
     }
 

@@ -79,6 +79,11 @@ public final class AppState: ObservableObject {
     }
     @Published public var isAutoFollowingPlayhead: Bool = true
 
+    // Markers & Slicing State
+    @Published public var activeMarkers: [AudioMarker] = []
+    @Published public var isMarkersPanelVisible: Bool = false
+    @Published public var selectedMarkerID: UUID? = nil
+
     public let audioEngine = AudioEngineController.shared
 
     public static let supportedAudioExtensions: Set<String> = [
@@ -424,6 +429,7 @@ public final class AppState: ObservableObject {
     public func playTrack(_ track: AudioTrack) {
         selectedTrackID = track.id
         audioEngine.loadAndPlay(track: track)
+        loadMarkersForCurrentTrack()
         statusMessage = "Playing: \(track.filename)"
     }
 
@@ -545,5 +551,182 @@ public final class AppState: ObservableObject {
             }
         }
         return results
+    }
+
+    // MARK: - Markers & Regions API
+
+    public func loadMarkersForCurrentTrack() {
+        guard let current = audioEngine.currentTrack else {
+            activeMarkers = []
+            selectedMarkerID = nil
+            return
+        }
+        activeMarkers = MarkerStorage.shared.loadMarkers(for: current.url)
+        selectedMarkerID = activeMarkers.first?.id
+    }
+
+    public func saveMarkersForCurrentTrack() {
+        guard let current = audioEngine.currentTrack else { return }
+        MarkerStorage.shared.saveMarkers(activeMarkers, for: current.url)
+    }
+
+    public func addMarkerAtPlayhead(name: String? = nil, colorHex: String? = nil) {
+        guard audioEngine.currentTrack != nil else {
+            statusMessage = "No audio loaded to add marker"
+            return
+        }
+        let time = audioEngine.currentTime
+        let count = activeMarkers.count + 1
+        let markerName = name ?? "Cue \(count)"
+        let color = colorHex ?? AudioMarker.presetColors[(count - 1) % AudioMarker.presetColors.count]
+
+        let newMarker = AudioMarker(name: markerName, timestamp: time, colorHex: color)
+        activeMarkers.append(newMarker)
+        activeMarkers.sort { $0.timestamp < $1.timestamp }
+        selectedMarkerID = newMarker.id
+        saveMarkersForCurrentTrack()
+        statusMessage = "Added marker '\(markerName)' at \(AudioMarker.formatTime(time))"
+    }
+
+    public func addRegionMarker(start: TimeInterval, end: TimeInterval, name: String? = nil, colorHex: String? = nil) {
+        guard audioEngine.currentTrack != nil else {
+            statusMessage = "No audio loaded to add region"
+            return
+        }
+        let minT = min(start, end)
+        let maxT = max(start, end)
+        guard maxT > minT + 0.05 else { return }
+
+        let count = activeMarkers.count + 1
+        let markerName = name ?? "Region \(count)"
+        let color = colorHex ?? AudioMarker.presetColors[(count - 1) % AudioMarker.presetColors.count]
+
+        let newMarker = AudioMarker(name: markerName, timestamp: minT, endTime: maxT, colorHex: color)
+        activeMarkers.append(newMarker)
+        activeMarkers.sort { $0.timestamp < $1.timestamp }
+        selectedMarkerID = newMarker.id
+        saveMarkersForCurrentTrack()
+        statusMessage = "Added region '\(markerName)' (\(newMarker.formattedDuration))"
+    }
+
+    public func updateMarker(_ marker: AudioMarker) {
+        if let idx = activeMarkers.firstIndex(where: { $0.id == marker.id }) {
+            activeMarkers[idx] = marker
+            activeMarkers.sort { $0.timestamp < $1.timestamp }
+            saveMarkersForCurrentTrack()
+        }
+    }
+
+    public func deleteMarker(id: UUID) {
+        if let marker = activeMarkers.first(where: { $0.id == id }) {
+            activeMarkers.removeAll { $0.id == id }
+            if selectedMarkerID == id {
+                selectedMarkerID = activeMarkers.first?.id
+            }
+            saveMarkersForCurrentTrack()
+            statusMessage = "Deleted marker '\(marker.name)'"
+        }
+    }
+
+    public func jumpToMarker(_ marker: AudioMarker) {
+        selectedMarkerID = marker.id
+        audioEngine.seek(to: marker.timestamp, autoPlay: true)
+        statusMessage = "Jumped to marker '\(marker.name)' (\(marker.formattedTimestamp))"
+    }
+
+    public func loopMarkerRegion(_ marker: AudioMarker) {
+        selectedMarkerID = marker.id
+        let duration = audioEngine.duration
+        let range = AudioSlicer.shared.effectiveTimeRange(for: marker, in: activeMarkers, trackDuration: duration)
+        audioEngine.setLoopRange(range.start...range.end)
+        audioEngine.seek(to: range.start, autoPlay: true)
+        statusMessage = "Looping '\(marker.name)': \(AudioMarker.formatTime(range.start)) - \(AudioMarker.formatTime(range.end))"
+    }
+
+    public func jumpToNextMarker() {
+        guard !activeMarkers.isEmpty else { return }
+        let current = audioEngine.currentTime
+        let next = activeMarkers.first(where: { $0.timestamp > current + 0.15 }) ?? activeMarkers.first!
+        jumpToMarker(next)
+    }
+
+    public func jumpToPreviousMarker() {
+        guard !activeMarkers.isEmpty else { return }
+        let current = audioEngine.currentTime
+        let prev = activeMarkers.last(where: { $0.timestamp < current - 0.25 }) ?? activeMarkers.last!
+        jumpToMarker(prev)
+    }
+
+    public func deleteMarker(_ marker: AudioMarker) {
+        deleteMarker(id: marker.id)
+    }
+
+    public func exportAllSlices(format: SliceFormat = .wav) {
+        guard let current = audioEngine.currentTrack else {
+            statusMessage = "No audio track loaded"
+            return
+        }
+        guard !activeMarkers.isEmpty else {
+            statusMessage = "No markers to export"
+            return
+        }
+
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Choose Export Folder"
+        panel.message = "Choose destination folder for exported slices"
+
+        if panel.runModal() == .OK, let dir = panel.url {
+            Task {
+                do {
+                    let urls = try await AudioSlicer.shared.exportAllSlices(
+                        track: current,
+                        markers: self.activeMarkers,
+                        destinationFolder: dir,
+                        format: format
+                    )
+                    await MainActor.run {
+                        self.statusMessage = "Exported \(urls.count) slices to \(dir.lastPathComponent)"
+                    }
+                } catch {
+                    await MainActor.run {
+                        self.statusMessage = "Slice export error: \(error.localizedDescription)"
+                    }
+                }
+            }
+        }
+    }
+
+    public func exportCueSheet() {
+        guard let current = audioEngine.currentTrack else {
+            statusMessage = "No audio track loaded"
+            return
+        }
+        guard !activeMarkers.isEmpty else {
+            statusMessage = "No markers to export"
+            return
+        }
+
+        let panel = NSSavePanel()
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = current.url.deletingPathExtension().lastPathComponent + ".cue"
+        panel.prompt = "Export CUE Sheet"
+
+        if panel.runModal() == .OK, let saveURL = panel.url {
+            let cue = MarkerStorage.shared.generateCueSheet(for: current, markers: activeMarkers)
+            do {
+                try cue.write(to: saveURL, atomically: true, encoding: .utf8)
+                statusMessage = "Exported CUE sheet to \(saveURL.lastPathComponent)"
+            } catch {
+                statusMessage = "Failed to export CUE sheet: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    public func toggleMarkersPanel() {
+        isMarkersPanelVisible.toggle()
     }
 }

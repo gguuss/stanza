@@ -221,6 +221,48 @@ struct StanzaApp: App {
                 }
             }
 
+            // Markers Menu
+            CommandMenu("Markers") {
+                Button("Add Marker at Playhead") {
+                    appState.addMarkerAtPlayhead()
+                }
+                .keyboardShortcut("m", modifiers: [])
+
+                Button("Jump to Next Marker") {
+                    appState.jumpToNextMarker()
+                }
+                .keyboardShortcut("]", modifiers: .option)
+
+                Button("Jump to Previous Marker") {
+                    appState.jumpToPreviousMarker()
+                }
+                .keyboardShortcut("[", modifiers: .option)
+
+                Divider()
+
+                Button(appState.isMarkersPanelVisible ? "Hide Markers Panel" : "Show Markers Panel") {
+                    appState.toggleMarkersPanel()
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Export Slices (WAV)...") {
+                    appState.exportAllSlices(format: .wav)
+                }
+                .disabled(appState.activeMarkers.filter { $0.isRegion }.isEmpty)
+
+                Button("Export Slices (M4A)...") {
+                    appState.exportAllSlices(format: .m4a)
+                }
+                .disabled(appState.activeMarkers.filter { $0.isRegion }.isEmpty)
+
+                Button("Export CUE Sheet...") {
+                    appState.exportCueSheet()
+                }
+                .disabled(appState.activeMarkers.isEmpty)
+            }
+
             // View Menu
             CommandMenu("View") {
                 Button("Explorer: Columns (Side by Side)") {

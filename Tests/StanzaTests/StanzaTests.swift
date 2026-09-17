@@ -795,6 +795,190 @@ final class StanzaTests: XCTestCase {
         XCTAssertEqual(appState.audioEngine.currentTrack?.url.resolvingSymlinksInPath().standardizedFileURL.path,
                        standardWavPath)
     }
+
+    // MARK: - Milestone 1.4: Markers & Slicing Tests
+
+    func testAudioMarkerCreationAndProperties() {
+        // Point marker
+        let point = AudioMarker(name: "Drop", timestamp: 125.4, colorHex: "#FF9500")
+        XCTAssertFalse(point.isRegion)
+        XCTAssertNil(point.endTime)
+        XCTAssertEqual(point.duration, 0)
+        XCTAssertEqual(point.formattedTimestamp, "2:05.40")
+        XCTAssertEqual(point.colorHex, "#FF9500")
+
+        // Region marker
+        let region = AudioMarker(name: "Chorus", timestamp: 30.0, endTime: 45.5, colorHex: "#30D158", notes: "Vocals")
+        XCTAssertTrue(region.isRegion)
+        XCTAssertEqual(region.duration, 15.5, accuracy: 0.001)
+        XCTAssertEqual(region.formattedTimestamp, "0:30.00")
+        XCTAssertEqual(region.formattedDuration, "15.50s")
+        XCTAssertEqual(region.notes, "Vocals")
+    }
+
+    func testMarkerStoragePersistence() throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let trackURL = tempDir.appendingPathComponent("song.mp3")
+        try "audio content".write(to: trackURL, atomically: true, encoding: .utf8)
+
+        let marker1 = AudioMarker(name: "Intro", timestamp: 0.0, endTime: 15.0, colorHex: "#007AFF")
+        let marker2 = AudioMarker(name: "Breakdown", timestamp: 64.25, colorHex: "#FF2D55")
+
+        // 1. Save markers
+        MarkerStorage.saveMarkers([marker1, marker2], for: trackURL)
+
+        // 2. Load markers
+        let loaded = MarkerStorage.loadMarkers(for: trackURL)
+        XCTAssertEqual(loaded.count, 2)
+        XCTAssertEqual(loaded[0].name, "Intro")
+        XCTAssertEqual(loaded[0].timestamp, 0.0)
+        XCTAssertEqual(loaded[0].endTime, 15.0)
+        XCTAssertEqual(loaded[1].name, "Breakdown")
+        XCTAssertEqual(loaded[1].timestamp, 64.25)
+        XCTAssertNil(loaded[1].endTime)
+
+        // Verify file is saved in companion path
+        let companionURL = MarkerStorage.markerFileURL(for: trackURL)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: companionURL.path))
+        XCTAssertTrue(companionURL.lastPathComponent.hasPrefix("."))
+
+        // 3. Clear markers
+        MarkerStorage.saveMarkers([], for: trackURL)
+        let cleared = MarkerStorage.loadMarkers(for: trackURL)
+        XCTAssertTrue(cleared.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: companionURL.path))
+    }
+
+    func testCueSheetGeneration() {
+        let trackURL = URL(fileURLWithPath: "/Music/Album/Track01.flac")
+        let m1 = AudioMarker(name: "Verse 1", timestamp: 0.0)
+        let m2 = AudioMarker(name: "Chorus 1", timestamp: 45.5) // 45 sec + 37 frames (approx 0.5 * 75)
+        let m3 = AudioMarker(name: "Outro", timestamp: 120.0)
+
+        let cue = MarkerStorage.exportCueSheet(markers: [m1, m2, m3], audioFileURL: trackURL)
+        XCTAssertTrue(cue.contains("FILE \"Track01.flac\" FLAC"))
+        XCTAssertTrue(cue.contains("TRACK 01 AUDIO"))
+        XCTAssertTrue(cue.contains("TITLE \"Verse 1\""))
+        XCTAssertTrue(cue.contains("INDEX 01 00:00:00"))
+        XCTAssertTrue(cue.contains("TRACK 02 AUDIO"))
+        XCTAssertTrue(cue.contains("TITLE \"Chorus 1\""))
+        XCTAssertTrue(cue.contains("TRACK 03 AUDIO"))
+        XCTAssertTrue(cue.contains("TITLE \"Outro\""))
+        XCTAssertTrue(cue.contains("INDEX 01 02:00:00"))
+    }
+
+    func testAudioSlicingLosslessWAV() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Create 2-second 44.1kHz stereo audio file
+        let sampleRate: Double = 44100.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let sourceURL = tempDir.appendingPathComponent("source.wav")
+        let totalFrames: AVAudioFrameCount = 44100 * 2 // 2s
+
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames)!
+        buffer.frameLength = totalFrames
+        for i in 0..<Int(totalFrames) {
+            let s = Float(sin(2.0 * .pi * 440.0 * Double(i) / sampleRate) * 0.6)
+            buffer.floatChannelData?[0][i] = s
+            buffer.floatChannelData?[1][i] = s
+        }
+        do {
+            let audioFile = try AVAudioFile(forWriting: sourceURL, settings: format.settings)
+            try audioFile.write(from: buffer)
+        }
+
+        // Slice 0.5s to 1.5s (1 second length)
+        let region = AudioMarker(name: "Test Slice", timestamp: 0.5, endTime: 1.5)
+        let destURL = tempDir.appendingPathComponent("test_slice.wav")
+
+        try await AudioSlicer.sliceAudio(sourceURL: sourceURL, region: region, destinationURL: destURL, format: .wav)
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destURL.path))
+        let slicedFile = try AVAudioFile(forReading: destURL)
+        let slicedDuration = Double(slicedFile.length) / slicedFile.fileFormat.sampleRate
+        XCTAssertEqual(slicedDuration, 1.0, accuracy: 0.05)
+        XCTAssertEqual(slicedFile.fileFormat.channelCount, 2)
+    }
+
+    @MainActor
+    func testAppStateMarkerActions() async throws {
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        // Synthesize a 10-second 44.1kHz stereo audio file
+        let sampleRate: Double = 44100.0
+        let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2)!
+        let trackURL = tempDir.appendingPathComponent("test_markers.wav")
+        let totalFrames: AVAudioFrameCount = 44100 * 10 // 10s
+
+        let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: totalFrames)!
+        buffer.frameLength = totalFrames
+        for i in 0..<Int(totalFrames) {
+            let s = Float(sin(2.0 * .pi * 440.0 * Double(i) / sampleRate) * 0.5)
+            buffer.floatChannelData?[0][i] = s
+            buffer.floatChannelData?[1][i] = s
+        }
+        do {
+            let audioFile = try AVAudioFile(forWriting: trackURL, settings: format.settings)
+            try audioFile.write(from: buffer)
+        }
+
+        let appState = AppState()
+        let track = await AudioTrack.load(from: trackURL)
+        appState.queue = [track]
+        appState.playTrack(track)
+
+        // 1. Initial state
+        XCTAssertTrue(appState.activeMarkers.isEmpty)
+        XCTAssertFalse(appState.isMarkersPanelVisible)
+
+        // 2. Add marker at playhead (seek to 2.0s first)
+        appState.audioEngine.seek(to: 2.0)
+        appState.addMarkerAtPlayhead()
+        XCTAssertEqual(appState.activeMarkers.count, 1)
+        XCTAssertEqual(appState.activeMarkers[0].timestamp, 2.0, accuracy: 0.1)
+
+        // 3. Add region marker
+        appState.addRegionMarker(start: 4.0, end: 8.0, name: "Drop")
+        XCTAssertEqual(appState.activeMarkers.count, 2)
+        XCTAssertEqual(appState.activeMarkers[1].name, "Drop")
+        XCTAssertTrue(appState.activeMarkers[1].isRegion)
+
+        // 4. Toggle markers panel
+        appState.toggleMarkersPanel()
+        XCTAssertTrue(appState.isMarkersPanelVisible)
+
+        // 5. Jump navigation
+        appState.jumpToMarker(appState.activeMarkers[0])
+        XCTAssertEqual(appState.audioEngine.currentTime, 2.0, accuracy: 0.1)
+
+        appState.jumpToNextMarker()
+        XCTAssertEqual(appState.audioEngine.currentTime, 4.0, accuracy: 0.1)
+
+        appState.jumpToPreviousMarker()
+        XCTAssertEqual(appState.audioEngine.currentTime, 2.0, accuracy: 0.1)
+
+        // 6. Loop marker region
+        appState.loopMarkerRegion(appState.activeMarkers[1])
+        XCTAssertNotNil(appState.audioEngine.loopRange)
+        XCTAssertEqual(appState.audioEngine.loopRange?.lowerBound ?? 0, 4.0, accuracy: 0.01)
+        XCTAssertEqual(appState.audioEngine.loopRange?.upperBound ?? 0, 8.0, accuracy: 0.01)
+
+        // 7. Delete marker
+        let markerToDelete = appState.activeMarkers[0]
+        appState.deleteMarker(markerToDelete)
+        XCTAssertEqual(appState.activeMarkers.count, 1)
+        XCTAssertEqual(appState.activeMarkers[0].name, "Drop")
+
+        appState.audioEngine.stop()
+    }
 }
 
 
