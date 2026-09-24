@@ -72,14 +72,14 @@ public struct FrequencyAnalyzerView: View {
                     // GPU-Accelerated Metal Spectrum (120 FPS) or Canvas Fallback
                     if MetalSpectrumView.isMetalAvailable {
                         MetalSpectrumView(mode: .combined, colorScheme: appState.waveformColorScheme)
-                            .id(appState.waveformColorScheme)
-                            .padding(.bottom, 22)
+                            .allowsHitTesting(false)
+                            .padding(.bottom, 30)
                     } else {
                         // High-Detail Spectrum (128 Bands + Spline Curve + Peak Hold)
                         Canvas { context, size in
                             let cw = size.width
                             let ch = size.height
-                            let cPlotH = max(10, ch - 22)
+                            let cPlotH = max(10, ch - 30)
                             let count = bands.count
                             guard count > 0 else { return }
 
@@ -147,45 +147,58 @@ public struct FrequencyAnalyzerView: View {
                         }
                     }
 
-                    // Frequency labels at the bottom positioned precisely at their log positions
-                    VStack {
+                    // Bottom Interactive Seekbar and Frequency Markers
+                    VStack(spacing: 0) {
                         Spacer()
+
+                        // Frequency labels positioned at their log positions (transparent to hit testing)
                         ZStack(alignment: .leading) {
                             ForEach(octaveFrequencies, id: \.freq) { item in
                                 let x = AudioAnalyzer.xFraction(for: item.freq) * w
                                 Text(item.label)
                                     .font(.system(size: 8, weight: .semibold, design: .monospaced))
                                     .foregroundColor(.white.opacity(0.35))
-                                    .position(x: x, y: 10)
+                                    .position(x: x, y: 7)
                             }
                         }
-                        .frame(height: 20)
-                    }
+                        .frame(height: 14)
+                        .allowsHitTesting(false)
 
-                    // Mini scrub seekbar at very bottom
-                    VStack {
-                        Spacer()
-                        let seekW = w
+                        // Full-width interactive seekbar track
+                        let seekW = max(1.0, w)
                         let progress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
+                        let currentX = CGFloat(progress) * seekW
 
                         ZStack(alignment: .leading) {
-                            Rectangle()
-                                .fill(Color.white.opacity(0.1))
-                                .frame(height: 3)
-                            Rectangle()
+                            // Subtle background track
+                            Capsule()
+                                .fill(Color.white.opacity(0.12))
+                                .frame(height: 4)
+
+                            // Orange elapsed progress fill
+                            Capsule()
                                 .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                                .frame(width: CGFloat(progress) * seekW, height: 3)
+                                .frame(width: max(2, min(currentX, seekW)), height: 4)
+
+                            // Playhead indicator thumb
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 8, height: 8)
+                                .shadow(color: Color(red: 1.0, green: 0.38, blue: 0.08).opacity(0.8), radius: 3)
+                                .position(x: min(max(4, currentX), seekW - 4), y: 6)
                         }
-                        .contentShape(Rectangle())
-                        .gesture(
-                            DragGesture(minimumDistance: 0)
-                                .onChanged { val in
-                                    let fraction = min(max(0, val.location.x / seekW), 1.0)
-                                    audioEngine.seek(to: fraction * audioEngine.duration)
-                                }
-                        )
-                        .frame(height: 4)
+                        .frame(height: 12)
                     }
+                    .frame(height: 32)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { val in
+                                guard audioEngine.duration > 0, w > 0 else { return }
+                                let fraction = min(max(0.0, val.location.x / w), 1.0)
+                                audioEngine.seek(to: fraction * audioEngine.duration)
+                            }
+                    )
                 }
             }
         }

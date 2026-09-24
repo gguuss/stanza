@@ -16,7 +16,8 @@ public struct StereoSpectrumView: View {
             let rightBands = data.right
             let levels = data.levels
 
-            GeometryReader { _ in
+            GeometryReader { geo in
+                let w = geo.size.width
                 ZStack(alignment: .topLeading) {
                     // Dark background
                     Color(nsColor: NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0))
@@ -56,18 +57,19 @@ public struct StereoSpectrumView: View {
                                 .frame(width: 84, height: 6)
                         }
                         .padding(.horizontal, 8)
-                        .padding(.bottom, 6)
+                        .padding(.bottom, 26)
                     }
 
                     // GPU-Accelerated Metal Dual L/R Spectrum (120 FPS) or Canvas Fallback
                     if MetalSpectrumView.isMetalAvailable {
                         MetalSpectrumView(mode: .stereoSplit, colorScheme: appState.waveformColorScheme)
-                            .id(appState.waveformColorScheme)
-                            .padding(.vertical, 18)
+                            .allowsHitTesting(false)
+                            .padding(.top, 18)
+                            .padding(.bottom, 26)
                     } else {
                         // High-Density Spectrum Bars (Dual L/R with 128 bands each)
                         Canvas { context, size in
-                            let w = size.width
+                            let cw = size.width
                             let h = size.height
                             let half = h / 2.0
                             let count = leftBands.count
@@ -75,8 +77,8 @@ public struct StereoSpectrumView: View {
 
                             let gap: CGFloat = 1.0
                             let totalGaps = CGFloat(count - 1) * gap
-                            let barWidth = max(1.5, (w - totalGaps) / CGFloat(count))
-                            let maxBarH = half - 18
+                            let barWidth = max(1.5, (cw - totalGaps) / CGFloat(count))
+                            let maxBarH = half - 26
 
                             var leftCurve = Path()
                             var rightCurve = Path()
@@ -128,32 +130,43 @@ public struct StereoSpectrumView: View {
                         }
                     }
 
-                    // Mini scrub seekbar at very bottom
+                    // Full-width interactive seekbar track at the bottom
                     VStack {
                         Spacer()
-                        GeometryReader { seekGeo in
-                            let seekW = seekGeo.size.width
-                            let progress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
+                        let seekW = max(1.0, w)
+                        let progress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
+                        let currentX = CGFloat(progress) * seekW
 
-                            ZStack(alignment: .leading) {
-                                Rectangle()
-                                    .fill(Color.white.opacity(0.1))
-                                    .frame(height: 3)
-                                Rectangle()
-                                    .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                                    .frame(width: CGFloat(progress) * seekW, height: 3)
-                            }
-                            .contentShape(Rectangle())
-                            .gesture(
-                                DragGesture(minimumDistance: 0)
-                                    .onChanged { val in
-                                        let fraction = min(max(0, val.location.x / seekW), 1.0)
-                                        audioEngine.seek(to: fraction * audioEngine.duration)
-                                    }
-                            )
+                        ZStack(alignment: .leading) {
+                            // Subtle background track
+                            Capsule()
+                                .fill(Color.white.opacity(0.12))
+                                .frame(height: 4)
+
+                            // Orange elapsed progress fill
+                            Capsule()
+                                .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
+                                .frame(width: max(2, min(currentX, seekW)), height: 4)
+
+                            // Playhead indicator thumb
+                            Circle()
+                                .fill(Color.white)
+                                .frame(width: 8, height: 8)
+                                .shadow(color: Color(red: 1.0, green: 0.38, blue: 0.08).opacity(0.8), radius: 3)
+                                .position(x: min(max(4, currentX), seekW - 4), y: 6)
                         }
-                        .frame(height: 4)
+                        .frame(height: 12)
                     }
+                    .frame(height: 26)
+                    .contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { val in
+                                guard audioEngine.duration > 0, w > 0 else { return }
+                                let fraction = min(max(0.0, val.location.x / w), 1.0)
+                                audioEngine.seek(to: fraction * audioEngine.duration)
+                            }
+                    )
                 }
             }
         }

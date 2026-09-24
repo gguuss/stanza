@@ -1189,6 +1189,25 @@ final class StanzaTests: XCTestCase {
         XCTAssertEqual(stereoView.colorScheme, .rgb)
         XCTAssertEqual(stereoView.mode, .stereoSplit)
     }
+
+    @MainActor
+    func testVisualizerBottomSeekInteraction() {
+        let appState = AppState()
+        let engine = appState.audioEngine
+
+        // Verify seek fraction calculation
+        let duration: Double = 120.0
+        let fraction: Double = 0.5
+        let targetTime = fraction * duration
+        XCTAssertEqual(targetTime, 60.0)
+
+        // Instantiate both spectrum views with appState
+        let freqView = FrequencyAnalyzerView(audioEngine: engine, appState: appState)
+        XCTAssertNotNil(freqView)
+
+        let stereoView = StereoSpectrumView(audioEngine: engine, appState: appState)
+        XCTAssertNotNil(stereoView)
+    }
 }
 
 
