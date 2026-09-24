@@ -58,6 +58,10 @@ public final class AppState: ObservableObject {
             UserDefaults.standard.set(waveformColorScheme.rawValue, forKey: Self.userDefaultsWaveformColorSchemeKey)
         }
     }
+    public var visualizerColorScheme: WaveformColorScheme {
+        get { waveformColorScheme }
+        set { waveformColorScheme = newValue }
+    }
     @Published public var isLoadingTracks: Bool = false
     @Published public var statusMessage: String = "Ready"
     public var hasHandledExternalOpen: Bool = false

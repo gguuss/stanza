@@ -77,37 +77,35 @@ public struct VisualizerContainerView: View {
                     Spacer()
                 }
 
-                // Waveform Color Scheme Picker (visible in Stereo Waveform mode)
-                if selectedMode == .stereoWaveform {
-                    Menu {
-                        ForEach(WaveformColorScheme.allCases) { scheme in
-                            Button {
-                                appState.waveformColorScheme = scheme
-                            } label: {
-                                if appState.waveformColorScheme == scheme {
-                                    Text("✓  \(scheme.rawValue)")
-                                } else {
-                                    Text("    \(scheme.rawValue)")
-                                }
+                // Color Scheme Picker (visible in all visualizer modes)
+                Menu {
+                    ForEach(WaveformColorScheme.allCases) { scheme in
+                        Button {
+                            appState.waveformColorScheme = scheme
+                        } label: {
+                            if appState.waveformColorScheme == scheme {
+                                Text("✓  \(scheme.rawValue)")
+                            } else {
+                                Text("    \(scheme.rawValue)")
                             }
                         }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "paintpalette.fill")
-                                .font(.system(size: 9.5))
-                                .foregroundColor(appState.waveformColorScheme == .classic ? Color.white.opacity(0.6) : Color.orange)
-                            Text(appState.waveformColorScheme.shortTitle)
-                                .font(.system(size: 9.5, weight: .medium))
-                                .foregroundColor(.white.opacity(0.85))
-                        }
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(Color.white.opacity(0.08))
-                        .cornerRadius(4)
                     }
-                    .menuStyle(.borderlessButton)
-                    .help("Waveform Color Scheme")
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "paintpalette.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundColor(appState.waveformColorScheme == .classic ? Color.white.opacity(0.6) : Color.orange)
+                        Text(appState.waveformColorScheme.shortTitle)
+                            .font(.system(size: 9.5, weight: .medium))
+                            .foregroundColor(.white.opacity(0.85))
+                    }
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 3)
+                    .background(Color.white.opacity(0.08))
+                    .cornerRadius(4)
                 }
+                .menuStyle(.borderlessButton)
+                .help("Visualizer Color Scheme")
 
                 // Markers & Slices Toggle Button
                 Button {
@@ -190,9 +188,9 @@ public struct VisualizerContainerView: View {
                             isExtracting: isExtracting
                         )
                     case .frequency:
-                        FrequencyAnalyzerView(audioEngine: audioEngine)
+                        FrequencyAnalyzerView(audioEngine: audioEngine, appState: appState)
                     case .stereoSpectrum:
-                        StereoSpectrumView(audioEngine: audioEngine)
+                        StereoSpectrumView(audioEngine: audioEngine, appState: appState)
                     }
                 }
                 .frame(minHeight: 140)

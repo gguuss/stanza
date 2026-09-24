@@ -206,7 +206,7 @@ struct StanzaApp: App {
 
                 Divider()
 
-                Menu("Waveform Color Scheme") {
+                Menu("Visualizer Color Scheme") {
                     ForEach(WaveformColorScheme.allCases) { scheme in
                         Button(action: {
                             appState.waveformColorScheme = scheme

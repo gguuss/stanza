@@ -2,6 +2,7 @@ import SwiftUI
 
 public struct FrequencyAnalyzerView: View {
     @ObservedObject var audioEngine: AudioEngineController
+    @ObservedObject var appState: AppState
 
     private let octaveFrequencies: [(label: String, freq: Float)] = [
         ("30", 30),
@@ -18,8 +19,9 @@ public struct FrequencyAnalyzerView: View {
 
     private let dbLevels: [Int] = [0, -6, -12, -18, -24, -36, -48]
 
-    public init(audioEngine: AudioEngineController) {
+    public init(audioEngine: AudioEngineController, appState: AppState) {
         self.audioEngine = audioEngine
+        self.appState = appState
     }
 
     public var body: some View {
@@ -69,7 +71,8 @@ public struct FrequencyAnalyzerView: View {
 
                     // GPU-Accelerated Metal Spectrum (120 FPS) or Canvas Fallback
                     if MetalSpectrumView.isMetalAvailable {
-                        MetalSpectrumView(mode: .combined)
+                        MetalSpectrumView(mode: .combined, colorScheme: appState.waveformColorScheme)
+                            .id(appState.waveformColorScheme)
                             .padding(.bottom, 22)
                     } else {
                         // High-Detail Spectrum (128 Bands + Spline Curve + Peak Hold)
@@ -84,14 +87,6 @@ public struct FrequencyAnalyzerView: View {
                             let totalGaps = CGFloat(count - 1) * gap
                             let barWidth = max(1.5, (cw - totalGaps) / CGFloat(count))
 
-                            // Gradient: deep blue -> electric cyan -> neon amber -> bright coral
-                            let barGradient = Gradient(stops: [
-                                .init(color: Color(red: 0.05, green: 0.35, blue: 0.70), location: 0.0),
-                                .init(color: Color(red: 0.10, green: 0.75, blue: 0.95), location: 0.55),
-                                .init(color: Color(red: 1.00, green: 0.65, blue: 0.15), location: 0.85),
-                                .init(color: Color(red: 1.00, green: 0.28, blue: 0.15), location: 1.0)
-                            ])
-
                             var curvePath = Path()
                             var fillPath = Path()
 
@@ -101,16 +96,15 @@ public struct FrequencyAnalyzerView: View {
                                 let barHeight = max(1.0, val * (cPlotH - 8))
                                 let y = cPlotH - barHeight
 
+                                let freqFraction = Float(i) / Float(max(1, count - 1))
+                                let barColor = appState.waveformColorScheme.color(for: freqFraction)
+
                                 // Draw rounded bar
                                 let barRect = CGRect(x: x, y: y, width: barWidth, height: barHeight)
                                 let roundedBar = Path(roundedRect: barRect, cornerRadius: 1.0)
                                 context.fill(
                                     roundedBar,
-                                    with: .linearGradient(
-                                        barGradient,
-                                        startPoint: CGPoint(x: x, y: cPlotH),
-                                        endPoint: CGPoint(x: x, y: 10)
-                                    )
+                                    with: .color(barColor)
                                 )
 
                                 // Peak Hold Cap
@@ -120,7 +114,7 @@ public struct FrequencyAnalyzerView: View {
                                     let peakRect = CGRect(x: x, y: peakY, width: barWidth, height: 2)
                                     context.fill(
                                         Path(roundedRect: peakRect, cornerRadius: 0.8),
-                                        with: .color(Color(red: 1.0, green: 0.85, blue: 0.40))
+                                        with: .color(appState.waveformColorScheme.peakColor)
                                     )
                                 }
 
@@ -142,12 +136,12 @@ public struct FrequencyAnalyzerView: View {
                             fillPath.closeSubpath()
 
                             // Ambient glow fill under curve
-                            context.fill(fillPath, with: .color(Color(red: 0.1, green: 0.7, blue: 0.9).opacity(0.08)))
+                            context.fill(fillPath, with: .color(appState.waveformColorScheme.accentColor.opacity(0.08)))
 
                             // High-contrast accent stroke line across band tops
                             context.stroke(
                                 curvePath,
-                                with: .color(Color(red: 0.5, green: 0.95, blue: 1.0).opacity(0.75)),
+                                with: .color(appState.waveformColorScheme.accentColor.opacity(0.75)),
                                 lineWidth: 1.2
                             )
                         }

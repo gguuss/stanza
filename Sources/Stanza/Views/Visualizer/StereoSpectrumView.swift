@@ -2,9 +2,11 @@ import SwiftUI
 
 public struct StereoSpectrumView: View {
     @ObservedObject var audioEngine: AudioEngineController
+    @ObservedObject var appState: AppState
 
-    public init(audioEngine: AudioEngineController) {
+    public init(audioEngine: AudioEngineController, appState: AppState) {
         self.audioEngine = audioEngine
+        self.appState = appState
     }
 
     public var body: some View {
@@ -59,7 +61,8 @@ public struct StereoSpectrumView: View {
 
                     // GPU-Accelerated Metal Dual L/R Spectrum (120 FPS) or Canvas Fallback
                     if MetalSpectrumView.isMetalAvailable {
-                        MetalSpectrumView(mode: .stereoSplit)
+                        MetalSpectrumView(mode: .stereoSplit, colorScheme: appState.waveformColorScheme)
+                            .id(appState.waveformColorScheme)
                             .padding(.vertical, 18)
                     } else {
                         // High-Density Spectrum Bars (Dual L/R with 128 bands each)
@@ -75,24 +78,14 @@ public struct StereoSpectrumView: View {
                             let barWidth = max(1.5, (w - totalGaps) / CGFloat(count))
                             let maxBarH = half - 18
 
-                            // Left Channel Gradients (Cyan -> Electric Blue)
-                            let leftGradient = Gradient(stops: [
-                                .init(color: Color(red: 0.10, green: 0.85, blue: 0.95), location: 0.0),
-                                .init(color: Color(red: 0.05, green: 0.40, blue: 0.80), location: 1.0)
-                            ])
-
-                            // Right Channel Gradients (Amber -> Neon Orange)
-                            let rightGradient = Gradient(stops: [
-                                .init(color: Color(red: 1.00, green: 0.65, blue: 0.15), location: 0.0),
-                                .init(color: Color(red: 0.85, green: 0.25, blue: 0.10), location: 1.0)
-                            ])
-
                             var leftCurve = Path()
                             var rightCurve = Path()
 
                             for i in 0..<count {
                                 let x = CGFloat(i) * (barWidth + gap)
                                 let centerX = x + barWidth * 0.5
+                                let freqFraction = Float(i) / Float(max(1, count - 1))
+                                let schemeColor = appState.waveformColorScheme.color(for: freqFraction)
 
                                 // Draw Left Channel (Top half, growing upwards from center divider)
                                 let lVal = CGFloat(leftBands[i])
@@ -102,7 +95,7 @@ public struct StereoSpectrumView: View {
                                 let lRect = CGRect(x: x, y: lY, width: barWidth, height: lBarH)
                                 context.fill(
                                     Path(roundedRect: lRect, cornerRadius: 0.8),
-                                    with: .linearGradient(leftGradient, startPoint: CGPoint(x: x, y: lY), endPoint: CGPoint(x: x, y: half))
+                                    with: .color(schemeColor)
                                 )
 
                                 if i == 0 {
@@ -119,7 +112,7 @@ public struct StereoSpectrumView: View {
                                 let rRect = CGRect(x: x, y: rY, width: barWidth, height: rBarH)
                                 context.fill(
                                     Path(roundedRect: rRect, cornerRadius: 0.8),
-                                    with: .linearGradient(rightGradient, startPoint: CGPoint(x: x, y: rY), endPoint: CGPoint(x: x, y: rY + rBarH))
+                                    with: .color(schemeColor.opacity(0.9))
                                 )
 
                                 if i == 0 {
@@ -130,8 +123,8 @@ public struct StereoSpectrumView: View {
                             }
 
                             // Stroke smooth accent curves across band boundaries
-                            context.stroke(leftCurve, with: .color(Color(red: 0.6, green: 0.95, blue: 1.0).opacity(0.8)), lineWidth: 1.0)
-                            context.stroke(rightCurve, with: .color(Color(red: 1.0, green: 0.85, blue: 0.4).opacity(0.8)), lineWidth: 1.0)
+                            context.stroke(leftCurve, with: .color(appState.waveformColorScheme.color(for: 0.8).opacity(0.8)), lineWidth: 1.0)
+                            context.stroke(rightCurve, with: .color(appState.waveformColorScheme.color(for: 0.3).opacity(0.8)), lineWidth: 1.0)
                         }
                     }
 

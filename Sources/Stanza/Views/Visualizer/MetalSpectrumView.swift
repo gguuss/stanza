@@ -9,9 +9,11 @@ public enum MetalVisualizerMode: Sendable {
 /// High-performance GPU-accelerated Metal visualizer for 128-band spectrum.
 public struct MetalSpectrumView: NSViewRepresentable {
     public let mode: MetalVisualizerMode
+    public let colorScheme: WaveformColorScheme
 
-    public init(mode: MetalVisualizerMode = .combined) {
+    public init(mode: MetalVisualizerMode = .combined, colorScheme: WaveformColorScheme = .classic) {
         self.mode = mode
+        self.colorScheme = colorScheme
     }
 
     public static var isMetalAvailable: Bool {
@@ -36,14 +38,16 @@ public struct MetalSpectrumView: NSViewRepresentable {
 
     public func updateNSView(_ nsView: MTKView, context: Context) {
         context.coordinator.mode = mode
+        context.coordinator.colorScheme = colorScheme
     }
 
     public func makeCoordinator() -> Coordinator {
-        Coordinator(mode: mode)
+        Coordinator(mode: mode, colorScheme: colorScheme)
     }
 
     public final class Coordinator: NSObject, MTKViewDelegate {
         var mode: MetalVisualizerMode
+        var colorScheme: WaveformColorScheme
         private var device: MTLDevice?
         private var commandQueue: MTLCommandQueue?
         private var pipelineState: MTLRenderPipelineState?
@@ -53,12 +57,17 @@ public struct MetalSpectrumView: NSViewRepresentable {
             var color: SIMD4<Float>
         }
 
-        private var vertexBuffer: MTLBuffer?
+        private let maxBuffersInFlight = 3
+        private var vertexBuffers: [MTLBuffer] = []
+        private var currentBufferIndex: Int = 0
+        private let inFlightSemaphore = DispatchSemaphore(value: 3)
+
         private let maxVertices = 128 * 6 * 4 // Room for bars, peak caps, stereo L/R
         private var currentVertices: [Vertex] = []
 
-        init(mode: MetalVisualizerMode) {
+        init(mode: MetalVisualizerMode, colorScheme: WaveformColorScheme) {
             self.mode = mode
+            self.colorScheme = colorScheme
             super.init()
             self.currentVertices.reserveCapacity(maxVertices)
         }
@@ -128,7 +137,13 @@ public struct MetalSpectrumView: NSViewRepresentable {
 
                 self.pipelineState = try device.makeRenderPipelineState(descriptor: pipelineDescriptor)
                 let bufferSize = maxVertices * MemoryLayout<Vertex>.stride
-                self.vertexBuffer = device.makeBuffer(length: bufferSize, options: .storageModeShared)
+
+                self.vertexBuffers.removeAll()
+                for _ in 0..<maxBuffersInFlight {
+                    if let buf = device.makeBuffer(length: bufferSize, options: .storageModeShared) {
+                        self.vertexBuffers.append(buf)
+                    }
+                }
             } catch {
                 print("MetalVisualizer pipeline initialization failed: \(error)")
             }
@@ -139,9 +154,12 @@ public struct MetalSpectrumView: NSViewRepresentable {
         public func draw(in view: MTKView) {
             guard let pipelineState = pipelineState,
                   let commandQueue = commandQueue,
-                  let vertexBuffer = vertexBuffer,
-                  let renderPassDesc = view.currentRenderPassDescriptor,
-                  let drawable = view.currentDrawable else {
+                  !vertexBuffers.isEmpty else {
+                return
+            }
+
+            // Non-blocking semaphore wait to maintain fluid 120 FPS
+            guard inFlightSemaphore.wait(timeout: .now()) == .success else {
                 return
             }
 
@@ -156,18 +174,36 @@ public struct MetalSpectrumView: NSViewRepresentable {
                 buildStereoSplitVertices(left: data.left, right: data.right)
             }
 
-            guard !currentVertices.isEmpty else { return }
-
-            let byteLength = currentVertices.count * MemoryLayout<Vertex>.stride
-            vertexBuffer.contents().copyMemory(from: currentVertices, byteCount: byteLength)
-
-            guard let commandBuffer = commandQueue.makeCommandBuffer(),
-                  let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDesc) else {
+            guard !currentVertices.isEmpty else {
+                inFlightSemaphore.signal()
                 return
             }
 
+            guard let renderPassDesc = view.currentRenderPassDescriptor,
+                  let drawable = view.currentDrawable else {
+                inFlightSemaphore.signal()
+                return
+            }
+
+            currentBufferIndex = (currentBufferIndex + 1) % vertexBuffers.count
+            let currentBuffer = vertexBuffers[currentBufferIndex]
+
+            let byteLength = currentVertices.count * MemoryLayout<Vertex>.stride
+            currentBuffer.contents().copyMemory(from: currentVertices, byteCount: byteLength)
+
+            guard let commandBuffer = commandQueue.makeCommandBuffer(),
+                  let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDesc) else {
+                inFlightSemaphore.signal()
+                return
+            }
+
+            let semaphore = self.inFlightSemaphore
+            commandBuffer.addCompletedHandler { _ in
+                semaphore.signal()
+            }
+
             encoder.setRenderPipelineState(pipelineState)
-            encoder.setVertexBuffer(vertexBuffer, offset: 0, index: 0)
+            encoder.setVertexBuffer(currentBuffer, offset: 0, index: 0)
             encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: currentVertices.count)
             encoder.endEncoding()
 
@@ -183,10 +219,7 @@ public struct MetalSpectrumView: NSViewRepresentable {
             let barWidthNDC: Float = (2.0 / totalBars) * 0.85
             let gapNDC: Float = (2.0 / totalBars) * 0.15
 
-            let baseColor = SIMD4<Float>(0.05, 0.35, 0.70, 1.0)
-            let midColor = SIMD4<Float>(0.10, 0.75, 0.95, 1.0)
-            let highColor = SIMD4<Float>(1.00, 0.65, 0.15, 1.0)
-            let peakColor = SIMD4<Float>(1.00, 0.85, 0.40, 1.0)
+            let peakColor = colorScheme.peakSIMD4Color
 
             for i in 0..<count {
                 let xLeft = -1.0 + Float(i) * (barWidthNDC + gapNDC)
@@ -196,7 +229,12 @@ public struct MetalSpectrumView: NSViewRepresentable {
                 let yBottom: Float = -1.0
                 let yTop = -1.0 + (val * 1.9) // leave headroom at top for axis
 
-                let topColor = val > 0.6 ? highColor : midColor
+                // Normalized frequency fraction (0.0 = low bass, 1.0 = high treble)
+                let freqFraction = Float(i) / Float(max(1, count - 1))
+                let topColor = colorScheme.simd4Color(for: freqFraction)
+
+                // Base color: subtle darker illuminated shade of the top color
+                let baseColor = SIMD4<Float>(topColor.x * 0.35, topColor.y * 0.35, topColor.z * 0.35, 0.85)
 
                 // Bar Quad: 2 Triangles
                 currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, yBottom), color: baseColor))
@@ -234,42 +272,47 @@ public struct MetalSpectrumView: NSViewRepresentable {
             let barWidthNDC: Float = (2.0 / totalBars) * 0.85
             let gapNDC: Float = (2.0 / totalBars) * 0.15
 
-            let leftBase = SIMD4<Float>(0.05, 0.40, 0.80, 1.0)
-            let leftTop = SIMD4<Float>(0.10, 0.85, 0.95, 1.0)
-
-            let rightBase = SIMD4<Float>(0.85, 0.25, 0.10, 1.0)
-            let rightTop = SIMD4<Float>(1.00, 0.65, 0.15, 1.0)
-
             for i in 0..<count {
                 let xLeft = -1.0 + Float(i) * (barWidthNDC + gapNDC)
                 let xRight = xLeft + barWidthNDC
 
+                // Normalized frequency fraction (0.0 = low bass, 1.0 = high treble)
+                let freqFraction = Float(i) / Float(max(1, count - 1))
+                let schemeColor = colorScheme.simd4Color(for: freqFraction)
+
                 // Left Channel (Top Half: y from 0.0 to +0.95)
+                let lTopColor = schemeColor
+                let lBaseColor = SIMD4<Float>(lTopColor.x * 0.35, lTopColor.y * 0.35, lTopColor.z * 0.35, 0.85)
+
                 let lVal = min(1.0, max(0.005, left[i]))
                 let lYBottom: Float = 0.0
                 let lYTop: Float = lVal * 0.92
 
-                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYBottom), color: leftBase))
-                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYBottom), color: leftBase))
-                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYTop), color: leftTop))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYBottom), color: lBaseColor))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYBottom), color: lBaseColor))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYTop), color: lTopColor))
 
-                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYBottom), color: leftBase))
-                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYTop), color: leftTop))
-                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYTop), color: leftTop))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYBottom), color: lBaseColor))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xRight, lYTop), color: lTopColor))
+                currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, lYTop), color: lTopColor))
 
                 // Right Channel (Bottom Half: y from 0.0 to -0.95)
                 if i < right.count {
+                    // Right channel faithfully follows the scheme palette with subtle stereo distinction
+                    let rTopColor = SIMD4<Float>(schemeColor.x * 0.94, schemeColor.y * 0.94, schemeColor.z * 0.94, 0.90)
+                    let rBaseColor = SIMD4<Float>(rTopColor.x * 0.35, rTopColor.y * 0.35, rTopColor.z * 0.35, 0.85)
+
                     let rVal = min(1.0, max(0.005, right[i]))
                     let rYTop: Float = 0.0
                     let rYBottom: Float = -(rVal * 0.92)
 
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYTop), color: rightBase))
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYTop), color: rightBase))
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYBottom), color: rightTop))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYTop), color: rBaseColor))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYTop), color: rBaseColor))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYBottom), color: rTopColor))
 
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYTop), color: rightBase))
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYBottom), color: rightTop))
-                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYBottom), color: rightTop))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYTop), color: rBaseColor))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xRight, rYBottom), color: rTopColor))
+                    currentVertices.append(Vertex(position: SIMD2<Float>(xLeft, rYBottom), color: rTopColor))
                 }
             }
         }

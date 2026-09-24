@@ -1122,9 +1122,72 @@ final class StanzaTests: XCTestCase {
         _ = await readTask.result
         _ = await writeTask.result
 
+        // Process a confirmation buffer to verify analyzer remains responsive after concurrency
+        if let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) {
+            buffer.frameLength = frameCount
+            for f in 0..<Int(frameCount) {
+                buffer.floatChannelData?[0][f] = 0.5
+                buffer.floatChannelData?[1][f] = 0.5
+            }
+            analyzer.processBuffer(buffer)
+        }
+
         let finalData = analyzer.getCurrentData()
         XCTAssertEqual(finalData.spectrum.count, analyzer.bandCount)
         XCTAssertGreaterThan(finalData.levels.leftPeak, 0.0)
+    }
+
+    @MainActor
+    func testSpectrumColorSchemeSIMD4AndMetalVisualizer() {
+        for scheme in WaveformColorScheme.allCases {
+            let low = scheme.simd4Color(for: 0.0)
+            let mid = scheme.simd4Color(for: 0.5)
+            let high = scheme.simd4Color(for: 1.0)
+
+            // RGBA alpha must be 1.0
+            XCTAssertEqual(low.w, 1.0)
+            XCTAssertEqual(mid.w, 1.0)
+            XCTAssertEqual(high.w, 1.0)
+
+            // Every scheme must differ between low and high frequencies across spectrum
+            XCTAssertNotEqual(low, high)
+
+            // Verify peak color alpha is 1.0
+            XCTAssertEqual(scheme.peakSIMD4Color.w, 1.0)
+        }
+
+        // Verify Classic multi-stop spectrum gradient (Blue bass -> Coral treble)
+        let classicLow = WaveformColorScheme.classic.simd4Color(for: 0.0)
+        let classicMid = WaveformColorScheme.classic.simd4Color(for: 0.55)
+        let classicHigh = WaveformColorScheme.classic.simd4Color(for: 1.0)
+        XCTAssertGreaterThan(classicLow.z, classicLow.x)  // Blue > Red for bass
+        XCTAssertGreaterThan(classicMid.y, classicMid.x)  // Green/Cyan > Red for mids
+        XCTAssertGreaterThan(classicHigh.x, classicHigh.z) // Red > Blue for treble
+
+        // Verify RGB scheme breakdown
+        let rgbLow = WaveformColorScheme.rgb.simd4Color(for: 0.05)   // Red bass
+        let rgbMid = WaveformColorScheme.rgb.simd4Color(for: 0.45)   // Yellow/Green mids
+        let rgbHigh = WaveformColorScheme.rgb.simd4Color(for: 0.95)  // Cyan/Blue treble
+
+        XCTAssertGreaterThan(rgbLow.x, rgbLow.y) // R > G for bass
+        XCTAssertGreaterThan(rgbLow.x, rgbLow.z) // R > B for bass
+        XCTAssertGreaterThan(rgbMid.y, rgbMid.z) // G > B for mid vocals/melodies
+        XCTAssertGreaterThan(rgbHigh.z, rgbHigh.x) // B > R for high treble
+
+        // Verify visualizerColorScheme alias on AppState
+        let state = AppState()
+        state.visualizerColorScheme = .amberLightBlue
+        XCTAssertEqual(state.waveformColorScheme, .amberLightBlue)
+        XCTAssertEqual(state.visualizerColorScheme, .amberLightBlue)
+
+        // Instantiate Metal visualizer with custom scheme
+        let metalView = MetalSpectrumView(mode: .combined, colorScheme: .purpleMagenta)
+        XCTAssertEqual(metalView.colorScheme, .purpleMagenta)
+        XCTAssertEqual(metalView.mode, .combined)
+
+        let stereoView = MetalSpectrumView(mode: .stereoSplit, colorScheme: .rgb)
+        XCTAssertEqual(stereoView.colorScheme, .rgb)
+        XCTAssertEqual(stereoView.mode, .stereoSplit)
     }
 }
 
