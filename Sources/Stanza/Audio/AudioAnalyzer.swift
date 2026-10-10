@@ -13,15 +13,16 @@ public struct StereoLevels: Sendable {
 public final class AudioAnalyzer: @unchecked Sendable {
     public static let shared = AudioAnalyzer()
 
-    public let fftSize: Int = 2048
+    public private(set) var fftSize: Int
     public let bandCount: Int = 128
 
-    private let log2n: vDSP_Length
-    private let fftSetup: vDSP_DFT_Setup?
+    private var log2n: vDSP_Length
+    private var fftSetup: vDSP_DFT_Setup?
     private var window: [Float]
 
     // Frequency bands
     private var bandFrequencies: [(low: Float, high: Float)] = []
+    private var currentSampleRate: Float = 44100.0
 
     // Sliding history buffers for continuous overlapping STFT
     private var leftHistory: [Float]
@@ -47,7 +48,8 @@ public final class AudioAnalyzer: @unchecked Sendable {
     private var peakBands: [Float]
     private var levels: StereoLevels = StereoLevels()
 
-    public init() {
+    public init(fftSize: Int = 1024) {
+        self.fftSize = fftSize
         let halfSize = fftSize / 2
         self.log2n = vDSP_Length(log2(Double(fftSize)))
         self.fftSetup = vDSP_DFT_zop_CreateSetup(
@@ -86,6 +88,42 @@ public final class AudioAnalyzer: @unchecked Sendable {
         }
     }
 
+    public func setTimeWindow(_ window: SpectrumTimeWindow) {
+        setFFTSize(window.fftSize)
+    }
+
+    public func setFFTSize(_ newSize: Int) {
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
+        guard newSize != fftSize, [256, 512, 1024, 2048, 4096].contains(newSize) else { return }
+
+        if let existingSetup = fftSetup {
+            vDSP_DFT_DestroySetup(existingSetup)
+        }
+
+        self.fftSize = newSize
+        let halfSize = newSize / 2
+        self.log2n = vDSP_Length(log2(Double(newSize)))
+        self.fftSetup = vDSP_DFT_zop_CreateSetup(
+            nil,
+            vDSP_Length(newSize),
+            .FORWARD
+        )
+        self.window = [Float](repeating: 0, count: newSize)
+        vDSP_hann_window(&self.window, vDSP_Length(newSize), Int32(vDSP_HANN_NORM))
+
+        self.leftHistory = [Float](repeating: 0, count: newSize)
+        self.rightHistory = [Float](repeating: 0, count: newSize)
+        self.windowedSamples = [Float](repeating: 0, count: newSize)
+        self.realIn = [Float](repeating: 0, count: newSize)
+        self.imagIn = [Float](repeating: 0, count: newSize)
+        self.realOut = [Float](repeating: 0, count: newSize)
+        self.imagOut = [Float](repeating: 0, count: newSize)
+        self.magnitudes = [Float](repeating: 0, count: halfSize)
+        self.leftMagnitudes = [Float](repeating: 0, count: halfSize)
+        self.rightMagnitudes = [Float](repeating: 0, count: halfSize)
+    }
+
     public func reset() {
         os_unfair_lock_lock(&unfairLock)
         defer { os_unfair_lock_unlock(&unfairLock) }
@@ -120,10 +158,6 @@ public final class AudioAnalyzer: @unchecked Sendable {
         guard frameCount > 0 else { return }
 
         let sampleRate = Float(buffer.format.sampleRate)
-        if bandFrequencies.isEmpty || abs(sampleRate - 44100) > 1000 {
-            setupLogBands(sampleRate: sampleRate)
-        }
-
         let leftSamples = channelData[0]
         let rightSamples = channelCount > 1 ? channelData[1] : channelData[0]
 
@@ -136,6 +170,14 @@ public final class AudioAnalyzer: @unchecked Sendable {
         vDSP_maxv(rightSamples, 1, &rightPeak, vDSP_Length(frameCount))
         vDSP_rmsqv(leftSamples, 1, &leftRMS, vDSP_Length(frameCount))
         vDSP_rmsqv(rightSamples, 1, &rightRMS, vDSP_Length(frameCount))
+
+        os_unfair_lock_lock(&unfairLock)
+        defer { os_unfair_lock_unlock(&unfairLock) }
+
+        if bandFrequencies.isEmpty || abs(sampleRate - currentSampleRate) > 100 {
+            currentSampleRate = sampleRate
+            setupLogBands(sampleRate: sampleRate)
+        }
 
         // Update sliding history buffers for continuous STFT
         if frameCount >= fftSize {
@@ -164,9 +206,6 @@ public final class AudioAnalyzer: @unchecked Sendable {
         aggregateBands(magnitudes: leftMagnitudes, sampleRate: sampleRate, outputBands: &leftBandsScratch)
         aggregateBands(magnitudes: rightMagnitudes, sampleRate: sampleRate, outputBands: &rightBandsScratch)
 
-        os_unfair_lock_lock(&unfairLock)
-        defer { os_unfair_lock_unlock(&unfairLock) }
-
         self.levels = StereoLevels(
             leftPeak: leftPeak,
             rightPeak: rightPeak,
@@ -174,9 +213,9 @@ public final class AudioAnalyzer: @unchecked Sendable {
             rightRMS: rightRMS
         )
 
-        // Ballistics smoothing: attack fast for punchy transients, decay smooth
-        let attack: Float = 0.85
-        let decay: Float = 0.20
+        // Responsive ballistics: fast attack (transients) and crisp decay (short averaging window)
+        let attack: Float = 0.92
+        let decay: Float = 0.45
 
         for i in 0..<bandCount {
             let lTarget = leftBandsScratch[i]
@@ -192,7 +231,7 @@ public final class AudioAnalyzer: @unchecked Sendable {
             if smoothedBands[i] > peakBands[i] {
                 peakBands[i] = smoothedBands[i]
             } else {
-                peakBands[i] = max(0, peakBands[i] - 0.008)
+                peakBands[i] = max(0, peakBands[i] - 0.02)
             }
 
             // Left
@@ -239,9 +278,10 @@ public final class AudioAnalyzer: @unchecked Sendable {
     }
 
     private func aggregateBands(magnitudes: [Float], sampleRate: Float, outputBands: inout [Float]) {
+        guard !magnitudes.isEmpty, !bandFrequencies.isEmpty else { return }
         let binWidth = (sampleRate * 0.5) / Float(magnitudes.count)
 
-        for i in 0..<bandCount {
+        for i in 0..<min(bandCount, bandFrequencies.count) {
             let (lowFreq, highFreq) = bandFrequencies[i]
             let startBin = max(0, min(magnitudes.count - 1, Int(floor(lowFreq / binWidth))))
             let endBin = max(startBin + 1, min(magnitudes.count, Int(ceil(highFreq / binWidth))))

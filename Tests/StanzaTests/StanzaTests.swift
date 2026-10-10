@@ -28,7 +28,8 @@ final class StanzaTests: XCTestCase {
             AppState.userDefaultsLastSelectedTrackKey,
             AppState.userDefaultsVisualizerModeKey,
             AppState.userDefaultsLeftPaneOrientationKey,
-            AppState.userDefaultsWaveformColorSchemeKey
+            AppState.userDefaultsWaveformColorSchemeKey,
+            AppState.userDefaultsSpectrumTimeWindowKey
         ]
         for key in keys {
             UserDefaults.standard.removeObject(forKey: key)
@@ -87,6 +88,48 @@ final class StanzaTests: XCTestCase {
         // Peak and RMS levels should be non-zero
         XCTAssertGreaterThan(data.levels.leftPeak, 0.5)
         XCTAssertGreaterThan(data.levels.rightPeak, 0.5)
+    }
+
+    func testSpectrumTimeWindows() {
+        let analyzer = AudioAnalyzer()
+        XCTAssertEqual(analyzer.fftSize, 1024) // Default is now 1024 (smaller time window)
+
+        analyzer.setTimeWindow(.small)
+        XCTAssertEqual(analyzer.fftSize, 512)
+
+        analyzer.setTimeWindow(.large)
+        XCTAssertEqual(analyzer.fftSize, 2048)
+
+        analyzer.setTimeWindow(.medium)
+        XCTAssertEqual(analyzer.fftSize, 1024)
+
+        // Verify processing works across different time window sizes
+        let sampleRate: Double = 44100
+        let frameCount: AVAudioFrameCount = 512
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: sampleRate, channels: 2),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frameCount) else {
+            XCTFail("Failed to allocate buffer")
+            return
+        }
+        buffer.frameLength = frameCount
+        for i in 0..<Int(frameCount) {
+            let t = Double(i) / sampleRate
+            let sample = Float(sin(2.0 * .pi * 440.0 * t) * 0.7)
+            buffer.floatChannelData?[0][i] = sample
+            buffer.floatChannelData?[1][i] = sample
+        }
+
+        analyzer.setTimeWindow(.small)
+        analyzer.processBuffer(buffer)
+        let smallData = analyzer.getCurrentData()
+        XCTAssertEqual(smallData.spectrum.count, 128)
+        XCTAssertGreaterThan(smallData.levels.leftPeak, 0.4)
+
+        analyzer.setTimeWindow(.medium)
+        analyzer.processBuffer(buffer)
+        let mediumData = analyzer.getCurrentData()
+        XCTAssertEqual(mediumData.spectrum.count, 128)
+        XCTAssertGreaterThan(mediumData.levels.leftPeak, 0.4)
     }
 
     func testWaveformDataEmpty() {

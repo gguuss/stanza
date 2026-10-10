@@ -219,6 +219,20 @@ struct StanzaApp: App {
                         }
                     }
                 }
+
+                Menu("Spectrum Time Window") {
+                    ForEach(SpectrumTimeWindow.allCases) { window in
+                        Button(action: {
+                            appState.spectrumTimeWindow = window
+                        }) {
+                            if appState.spectrumTimeWindow == window {
+                                Text("✓  \(window.displayName)")
+                            } else {
+                                Text("    \(window.displayName)")
+                            }
+                        }
+                    }
+                }
             }
 
             // Markers Menu

@@ -107,6 +107,38 @@ public struct VisualizerContainerView: View {
                 .menuStyle(.borderlessButton)
                 .help("Visualizer Color Scheme")
 
+                // Spectrum Time Window Picker (visible in spectrum modes)
+                if selectedMode == .frequency || selectedMode == .stereoSpectrum {
+                    Menu {
+                        ForEach(SpectrumTimeWindow.allCases) { window in
+                            Button {
+                                appState.spectrumTimeWindow = window
+                            } label: {
+                                if appState.spectrumTimeWindow == window {
+                                    Text("✓  \(window.displayName)")
+                                } else {
+                                    Text("    \(window.displayName)")
+                                }
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "gauge.with.needle")
+                                .font(.system(size: 9.5))
+                                .foregroundColor(.cyan)
+                            Text(appState.spectrumTimeWindow.shortTitle)
+                                .font(.system(size: 9.5, weight: .medium, design: .monospaced))
+                                .foregroundColor(.white.opacity(0.85))
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 3)
+                        .background(Color.white.opacity(0.08))
+                        .cornerRadius(4)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .help("Spectrum Time Window / Response Time")
+                }
+
                 // Markers & Slices Toggle Button
                 Button {
                     appState.toggleMarkersPanel()

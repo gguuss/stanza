@@ -15,6 +15,7 @@ public final class AppState: ObservableObject {
     public static let userDefaultsVisualizerModeKey = "stanza.visualizerMode"
     public static let userDefaultsLeftPaneOrientationKey = "stanza.leftPaneOrientation"
     public static let userDefaultsWaveformColorSchemeKey = "stanza.waveformColorScheme"
+    public static let userDefaultsSpectrumTimeWindowKey = "stanza.spectrumTimeWindow"
 
     public static var isOptionKeyPressed: Bool {
         if let event = NSApplication.shared.currentEvent {
@@ -56,6 +57,12 @@ public final class AppState: ObservableObject {
     @Published public var waveformColorScheme: WaveformColorScheme = .classic {
         didSet {
             UserDefaults.standard.set(waveformColorScheme.rawValue, forKey: Self.userDefaultsWaveformColorSchemeKey)
+        }
+    }
+    @Published public var spectrumTimeWindow: SpectrumTimeWindow = .medium {
+        didSet {
+            UserDefaults.standard.set(spectrumTimeWindow.rawValue, forKey: Self.userDefaultsSpectrumTimeWindowKey)
+            AudioAnalyzer.shared.setTimeWindow(spectrumTimeWindow)
         }
     }
     public var visualizerColorScheme: WaveformColorScheme {
@@ -111,6 +118,13 @@ public final class AppState: ObservableObject {
         if let schemeStr = UserDefaults.standard.string(forKey: Self.userDefaultsWaveformColorSchemeKey),
            let scheme = WaveformColorScheme(rawValue: schemeStr) {
             self.waveformColorScheme = scheme
+        }
+        if let windowVal = UserDefaults.standard.object(forKey: Self.userDefaultsSpectrumTimeWindowKey) as? Int,
+           let window = SpectrumTimeWindow(rawValue: windowVal) {
+            self.spectrumTimeWindow = window
+            AudioAnalyzer.shared.setTimeWindow(window)
+        } else {
+            AudioAnalyzer.shared.setTimeWindow(.medium)
         }
 
         setupQuickAccess()
