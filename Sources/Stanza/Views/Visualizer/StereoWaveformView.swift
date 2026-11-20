@@ -88,131 +88,16 @@ public struct StereoWaveformView: View {
                     }
                 }
 
-                // Waveform Canvas (Dual L/R with Zoom & Viewport Slicing)
-                Canvas { context, size in
-                    let w = size.width
-                    let h = size.height
-                    let half = h / 2.0
-                    let quarter = half / 2.0
-                    let rightCenter = half + quarter
-
-                    let points = waveformData.samplePoints
-                    guard points > 0 else { return }
-
-                    let leftPeaks = waveformData.left
-                    let rightPeaks = waveformData.right
-                    let freqs = waveformData.frequencies
-                    let scheme = appState.waveformColorScheme
-                    let waveColor = Color(red: 0.52, green: 0.58, blue: 0.65)
-
-                    // Calculate index slice corresponding to current viewport
-                    let startIndex = max(0, Int(Double(points) * offset) - 1)
-                    let endIndex = min(points, Int(Double(points) * (offset + visibleFraction)) + 2)
-                    guard startIndex < endIndex else { return }
-
-                    if scheme == .classic {
-                        // Draw Left Channel (Top half)
-                        var leftPath = Path()
-                        var isFirst = true
-                        for i in startIndex..<endIndex {
-                            let frac = Double(i) / Double(points)
-                            let x = CGFloat((frac - offset) / visibleFraction) * w
-                            let maxVal = CGFloat(leftPeaks.maxPeaks[i])
-                            let y = quarter - (maxVal * quarter * 0.95)
-                            if isFirst {
-                                leftPath.move(to: CGPoint(x: x, y: quarter))
-                                leftPath.addLine(to: CGPoint(x: x, y: y))
-                                isFirst = false
-                            } else {
-                                leftPath.addLine(to: CGPoint(x: x, y: y))
-                            }
-                        }
-                        for i in (startIndex..<endIndex).reversed() {
-                            let frac = Double(i) / Double(points)
-                            let x = CGFloat((frac - offset) / visibleFraction) * w
-                            let minVal = CGFloat(leftPeaks.minPeaks[i])
-                            let y = quarter - (minVal * quarter * 0.95)
-                            leftPath.addLine(to: CGPoint(x: x, y: y))
-                        }
-                        leftPath.closeSubpath()
-                        context.fill(leftPath, with: .color(waveColor))
-
-                        // Draw Right Channel (Bottom half)
-                        var rightPath = Path()
-                        let rightCenter = half + quarter
-                        isFirst = true
-                        for i in startIndex..<endIndex {
-                            let frac = Double(i) / Double(points)
-                            let x = CGFloat((frac - offset) / visibleFraction) * w
-                            let maxVal = CGFloat(rightPeaks.maxPeaks[i])
-                            let y = rightCenter - (maxVal * quarter * 0.95)
-                            if isFirst {
-                                rightPath.move(to: CGPoint(x: x, y: rightCenter))
-                                rightPath.addLine(to: CGPoint(x: x, y: y))
-                                isFirst = false
-                            } else {
-                                rightPath.addLine(to: CGPoint(x: x, y: y))
-                            }
-                        }
-                        for i in (startIndex..<endIndex).reversed() {
-                            let frac = Double(i) / Double(points)
-                            let x = CGFloat((frac - offset) / visibleFraction) * w
-                            let minVal = CGFloat(rightPeaks.minPeaks[i])
-                            let y = rightCenter - (minVal * quarter * 0.95)
-                            rightPath.addLine(to: CGPoint(x: x, y: y))
-                        }
-                        rightPath.closeSubpath()
-                        context.fill(rightPath, with: .color(waveColor))
-                    } else {
-                        // Render Frequency-Colored Gradient Waveform Slices
-                        let rightCenter = half + quarter
-                        for i in startIndex..<endIndex {
-                            let frac = Double(i) / Double(points)
-                            let x = CGFloat((frac - offset) / visibleFraction) * w
-                            let nextFrac = Double(i + 1) / Double(points)
-                            let nextX = CGFloat((nextFrac - offset) / visibleFraction) * w
-                            let sliceWidth = max(1.0, nextX - x)
-
-                            let freq = freqs.indices.contains(i) ? freqs[i] : 0.5
-                            let sliceColor = scheme.color(for: freq)
-
-                            // Left Channel slice (Top half)
-                            let leftMax = CGFloat(leftPeaks.maxPeaks[i])
-                            let leftMin = CGFloat(leftPeaks.minPeaks[i])
-                            let leftTop = quarter - (leftMax * quarter * 0.95)
-                            let leftBottom = quarter - (leftMin * quarter * 0.95)
-                            let leftHeight = max(1.0, leftBottom - leftTop)
-                            context.fill(
-                                Path(CGRect(x: x, y: leftTop, width: sliceWidth, height: leftHeight)),
-                                with: .color(sliceColor)
-                            )
-
-                            // Right Channel slice (Bottom half)
-                            let rightMax = CGFloat(rightPeaks.maxPeaks[i])
-                            let rightMin = CGFloat(rightPeaks.minPeaks[i])
-                            let rightTop = rightCenter - (rightMax * quarter * 0.95)
-                            let rightBottom = rightCenter - (rightMin * quarter * 0.95)
-                            let rightHeight = max(1.0, rightBottom - rightTop)
-                            context.fill(
-                                Path(CGRect(x: x, y: rightTop, width: sliceWidth, height: rightHeight)),
-                                with: .color(sliceColor)
-                            )
-                        }
-                    }
-
-                    // Reference zero-lines
-                    let lineLeft = Path { p in
-                        p.move(to: CGPoint(x: 0, y: quarter))
-                        p.addLine(to: CGPoint(x: w, y: quarter))
-                    }
-                    context.stroke(lineLeft, with: .color(Color(red: 0.9, green: 0.3, blue: 0.2).opacity(0.4)), lineWidth: 0.75)
-
-                    let lineRight = Path { p in
-                        p.move(to: CGPoint(x: 0, y: rightCenter))
-                        p.addLine(to: CGPoint(x: w, y: rightCenter))
-                    }
-                    context.stroke(lineRight, with: .color(Color(red: 0.9, green: 0.3, blue: 0.2).opacity(0.4)), lineWidth: 0.75)
-                }
+                // Waveform Canvas (Isolated Equatable + Metal-cached + pixel-bucketed)
+                WaveformCanvasView(
+                    waveformData: waveformData,
+                    colorScheme: appState.waveformColorScheme,
+                    offset: offset,
+                    visibleFraction: visibleFraction
+                )
+                .equatable()
+                .drawingGroup()
+                .allowsHitTesting(false)
 
                 // Loading spinner if extracting waveform
                 if isExtracting {
@@ -259,37 +144,17 @@ public struct StereoWaveformView: View {
                     loopOverlayView(startX: startX, endX: endX, height: height, minF: minF, maxF: maxF, isLiveDrag: false)
                 }
 
-                // Playhead (Orange vertical line & timestamp badge)
-                let actualProgress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
-                let progress = scrubFraction ?? actualProgress
-                let playheadX = CGFloat((progress - offset) / visibleFraction) * width
-
-                if playheadX >= -5 && playheadX <= width + 5 {
-                    // Vertical orange line
-                    Rectangle()
-                        .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                        .frame(width: 2, height: height)
-                        .position(x: min(max(0, playheadX), width), y: height / 2.0)
-
-                    // Timestamp Badge at center divider
-                    let displayTime = (scrubFraction != nil && audioEngine.duration > 0)
-                        ? (scrubFraction! * audioEngine.duration)
-                        : audioEngine.currentTime
-                    let badgeTime = formatTime(displayTime)
-                    let badgeWidth: CGFloat = 52
-                    let badgeX = min(max(badgeWidth / 2.0 + 2, playheadX + badgeWidth / 2.0 + 2), width - badgeWidth / 2.0 - 2)
-
-                    Text(badgeTime)
-                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(
-                            RoundedRectangle(cornerRadius: 3)
-                                .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                        )
-                        .position(x: badgeX, y: halfHeight + 12)
-                }
+                // Isolated 120 FPS Playhead (Orange vertical line & timestamp badge)
+                WaveformPlayheadOverlay(
+                    audioEngine: audioEngine,
+                    width: width,
+                    height: height,
+                    halfHeight: halfHeight,
+                    offset: offset,
+                    visibleFraction: visibleFraction,
+                    scrubFraction: scrubFraction
+                )
+                .allowsHitTesting(false)
 
                 // Floating Zoom HUD in top-right corner
                 HStack(spacing: 3) {
@@ -599,6 +464,214 @@ public struct StereoWaveformView: View {
                         .background(RoundedRectangle(cornerRadius: 3).fill(marker.color.opacity(0.85)))
                         .position(x: min(max(30, mX + 22), width - 30), y: 12)
                     }
+                }
+            }
+        }
+    }
+
+    private func formatTime(_ time: TimeInterval) -> String {
+        guard time.isFinite && time >= 0 else { return "0:00,0" }
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        let tenths = Int((time.truncatingRemainder(dividingBy: 1)) * 10)
+        return String(format: "%d:%02d,%d", minutes, seconds, tenths)
+    }
+}
+
+/// Isolated, Equatable stereo waveform canvas cached via Metal `.drawingGroup()`.
+/// Re-renders ONLY when track waveform, color scheme, zoom, or viewport offset changes — never on playhead ticks.
+private struct WaveformCanvasView: View, Equatable {
+    let waveformData: WaveformData
+    let colorScheme: WaveformColorScheme
+    let offset: Double
+    let visibleFraction: Double
+
+    static func == (lhs: WaveformCanvasView, rhs: WaveformCanvasView) -> Bool {
+        lhs.waveformData == rhs.waveformData &&
+        lhs.colorScheme == rhs.colorScheme &&
+        lhs.offset == rhs.offset &&
+        lhs.visibleFraction == rhs.visibleFraction
+    }
+
+    var body: some View {
+        Canvas { context, size in
+            let w = size.width
+            let h = size.height
+            let half = h / 2.0
+            let quarter = half / 2.0
+            let rightCenter = half + quarter
+
+            let points = waveformData.samplePoints
+            guard points > 0, w > 0 else { return }
+
+            let leftPeaks = waveformData.left
+            let rightPeaks = waveformData.right
+            let freqs = waveformData.frequencies
+            let waveColor = Color(red: 0.52, green: 0.58, blue: 0.65)
+
+            let startIndex = max(0, Int(Double(points) * offset) - 1)
+            let endIndex = min(points, Int(Double(points) * (offset + visibleFraction)) + 2)
+            let visibleCount = endIndex - startIndex
+            guard visibleCount > 0 else { return }
+
+            if colorScheme == .classic {
+                var leftPath = Path()
+                var isFirst = true
+                for i in startIndex..<endIndex {
+                    let frac = Double(i) / Double(points)
+                    let x = CGFloat((frac - offset) / visibleFraction) * w
+                    let maxVal = CGFloat(leftPeaks.maxPeaks[i])
+                    let y = quarter - (maxVal * quarter * 0.95)
+                    if isFirst {
+                        leftPath.move(to: CGPoint(x: x, y: quarter))
+                        leftPath.addLine(to: CGPoint(x: x, y: y))
+                        isFirst = false
+                    } else {
+                        leftPath.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+                for i in (startIndex..<endIndex).reversed() {
+                    let frac = Double(i) / Double(points)
+                    let x = CGFloat((frac - offset) / visibleFraction) * w
+                    let minVal = CGFloat(leftPeaks.minPeaks[i])
+                    let y = quarter - (minVal * quarter * 0.95)
+                    leftPath.addLine(to: CGPoint(x: x, y: y))
+                }
+                leftPath.closeSubpath()
+                context.fill(leftPath, with: .color(waveColor))
+
+                var rightPath = Path()
+                isFirst = true
+                for i in startIndex..<endIndex {
+                    let frac = Double(i) / Double(points)
+                    let x = CGFloat((frac - offset) / visibleFraction) * w
+                    let maxVal = CGFloat(rightPeaks.maxPeaks[i])
+                    let y = rightCenter - (maxVal * quarter * 0.95)
+                    if isFirst {
+                        rightPath.move(to: CGPoint(x: x, y: rightCenter))
+                        rightPath.addLine(to: CGPoint(x: x, y: y))
+                        isFirst = false
+                    } else {
+                        rightPath.addLine(to: CGPoint(x: x, y: y))
+                    }
+                }
+                for i in (startIndex..<endIndex).reversed() {
+                    let frac = Double(i) / Double(points)
+                    let x = CGFloat((frac - offset) / visibleFraction) * w
+                    let minVal = CGFloat(rightPeaks.minPeaks[i])
+                    let y = rightCenter - (minVal * quarter * 0.95)
+                    rightPath.addLine(to: CGPoint(x: x, y: y))
+                }
+                rightPath.closeSubpath()
+                context.fill(rightPath, with: .color(waveColor))
+            } else {
+                // Pixel-bucketed rendering: avoids drawing multiple overlapping sub-pixel slices
+                let step = max(1, visibleCount / max(1, Int(ceil(w))))
+                var i = startIndex
+                while i < endIndex {
+                    let bucketEnd = min(endIndex, i + step)
+                    var lMax: Float = -1.0
+                    var lMin: Float = 1.0
+                    var rMax: Float = -1.0
+                    var rMin: Float = 1.0
+                    var freqSum: Float = 0.0
+
+                    for j in i..<bucketEnd {
+                        let lm = leftPeaks.maxPeaks[j]
+                        let ln = leftPeaks.minPeaks[j]
+                        let rm = rightPeaks.maxPeaks[j]
+                        let rn = rightPeaks.minPeaks[j]
+                        if lm > lMax { lMax = lm }
+                        if ln < lMin { lMin = ln }
+                        if rm > rMax { rMax = rm }
+                        if rn < rMin { rMin = rn }
+                        freqSum += freqs.indices.contains(j) ? freqs[j] : 0.5
+                    }
+
+                    let frac = Double(i) / Double(points)
+                    let nextFrac = Double(bucketEnd) / Double(points)
+                    let x = CGFloat((frac - offset) / visibleFraction) * w
+                    let nextX = CGFloat((nextFrac - offset) / visibleFraction) * w
+                    let sliceWidth = max(1.0, nextX - x)
+
+                    let avgFreq = freqSum / Float(bucketEnd - i)
+                    let sliceColor = colorScheme.color(for: avgFreq)
+
+                    let leftTop = quarter - (CGFloat(lMax) * quarter * 0.95)
+                    let leftBottom = quarter - (CGFloat(lMin) * quarter * 0.95)
+                    context.fill(
+                        Path(CGRect(x: x, y: leftTop, width: sliceWidth, height: max(1.0, leftBottom - leftTop))),
+                        with: .color(sliceColor)
+                    )
+
+                    let rightTop = rightCenter - (CGFloat(rMax) * quarter * 0.95)
+                    let rightBottom = rightCenter - (CGFloat(rMin) * quarter * 0.95)
+                    context.fill(
+                        Path(CGRect(x: x, y: rightTop, width: sliceWidth, height: max(1.0, rightBottom - rightTop))),
+                        with: .color(sliceColor)
+                    )
+
+                    i = bucketEnd
+                }
+            }
+
+            // Reference zero-lines
+            let lineLeft = Path { p in
+                p.move(to: CGPoint(x: 0, y: quarter))
+                p.addLine(to: CGPoint(x: w, y: quarter))
+            }
+            context.stroke(lineLeft, with: .color(Color(red: 0.9, green: 0.3, blue: 0.2).opacity(0.4)), lineWidth: 0.75)
+
+            let lineRight = Path { p in
+                p.move(to: CGPoint(x: 0, y: rightCenter))
+                p.addLine(to: CGPoint(x: w, y: rightCenter))
+            }
+            context.stroke(lineRight, with: .color(Color(red: 0.9, green: 0.3, blue: 0.2).opacity(0.4)), lineWidth: 0.75)
+        }
+    }
+}
+
+/// Isolated 120 FPS playhead overlay for StereoWaveformView.
+private struct WaveformPlayheadOverlay: View {
+    @ObservedObject var audioEngine: AudioEngineController
+    let width: CGFloat
+    let height: CGFloat
+    let halfHeight: CGFloat
+    let offset: Double
+    let visibleFraction: Double
+    let scrubFraction: Double?
+
+    var body: some View {
+        TimelineView(.animation(paused: audioEngine.playbackState != .playing)) { _ in
+            let liveTime = audioEngine.interpolatedCurrentTime
+            let actualProgress = (audioEngine.duration > 0) ? (liveTime / audioEngine.duration) : 0.0
+            let progress = scrubFraction ?? actualProgress
+            let playheadX = CGFloat((progress - offset) / visibleFraction) * width
+
+            if playheadX >= -5 && playheadX <= width + 5 {
+                ZStack {
+                    Rectangle()
+                        .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
+                        .frame(width: 2, height: height)
+                        .position(x: min(max(0, playheadX), width), y: height / 2.0)
+
+                    let displayTime = (scrubFraction != nil && audioEngine.duration > 0)
+                        ? (scrubFraction! * audioEngine.duration)
+                        : liveTime
+                    let badgeTime = formatTime(displayTime)
+                    let badgeWidth: CGFloat = 52
+                    let badgeX = min(max(badgeWidth / 2.0 + 2, playheadX + badgeWidth / 2.0 + 2), width - badgeWidth / 2.0 - 2)
+
+                    Text(badgeTime)
+                        .font(.system(size: 10.5, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
+                        )
+                        .position(x: badgeX, y: halfHeight + 12)
                 }
             }
         }

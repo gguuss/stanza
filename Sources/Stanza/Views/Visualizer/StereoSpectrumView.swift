@@ -10,64 +10,35 @@ public struct StereoSpectrumView: View {
     }
 
     public var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
-            let data = AudioAnalyzer.shared.getCurrentData()
-            let leftBands = data.left
-            let rightBands = data.right
-            let levels = data.levels
+        GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .topLeading) {
+                // Dark background
+                Color(nsColor: NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0))
 
-            GeometryReader { geo in
-                let w = geo.size.width
-                ZStack(alignment: .topLeading) {
-                    // Dark background
-                    Color(nsColor: NSColor(red: 0.11, green: 0.12, blue: 0.14, alpha: 1.0))
+                // Split divider
+                VStack(spacing: 0) {
+                    Spacer()
+                    Rectangle()
+                        .fill(Color.white.opacity(0.12))
+                        .frame(height: 1)
+                    Spacer()
+                }
+                .allowsHitTesting(false)
 
-                    // Split divider
-                    VStack(spacing: 0) {
-                        Spacer()
-                        Rectangle()
-                            .fill(Color.white.opacity(0.12))
-                            .frame(height: 1)
-                        Spacer()
-                    }
-
-                    // Channel Labels & Real-time VU Meters
-                    VStack {
-                        // Left channel header
-                        HStack {
-                            Text("LEFT CHANNEL (128-BAND FFT)")
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.35))
-                            Spacer()
-                            LevelMeterBar(peak: levels.leftPeak, rms: levels.leftRMS)
-                                .frame(width: 84, height: 6)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.top, 4)
-
-                        Spacer()
-
-                        // Right channel header
-                        HStack {
-                            Text("RIGHT CHANNEL (128-BAND FFT)")
-                                .font(.system(size: 8, weight: .bold, design: .monospaced))
-                                .foregroundColor(.white.opacity(0.35))
-                            Spacer()
-                            LevelMeterBar(peak: levels.rightPeak, rms: levels.rightRMS)
-                                .frame(width: 84, height: 6)
-                        }
-                        .padding(.horizontal, 8)
+                // GPU-Accelerated Metal Dual L/R Spectrum (120 FPS via CVDisplayLink)
+                if MetalSpectrumView.isMetalAvailable {
+                    MetalSpectrumView(mode: .stereoSplit, colorScheme: appState.waveformColorScheme)
+                        .allowsHitTesting(false)
+                        .padding(.top, 18)
                         .padding(.bottom, 26)
-                    }
+                } else {
+                    // Canvas fallback driven by TimelineView only when Metal is unavailable
+                    TimelineView(.animation(minimumInterval: 1.0 / 120.0)) { _ in
+                        let data = AudioAnalyzer.shared.getCurrentData()
+                        let leftBands = data.left
+                        let rightBands = data.right
 
-                    // GPU-Accelerated Metal Dual L/R Spectrum (120 FPS) or Canvas Fallback
-                    if MetalSpectrumView.isMetalAvailable {
-                        MetalSpectrumView(mode: .stereoSplit, colorScheme: appState.waveformColorScheme)
-                            .allowsHitTesting(false)
-                            .padding(.top, 18)
-                            .padding(.bottom, 26)
-                    } else {
-                        // High-Density Spectrum Bars (Dual L/R with 128 bands each)
                         Canvas { context, size in
                             let cw = size.width
                             let h = size.height
@@ -89,7 +60,6 @@ public struct StereoSpectrumView: View {
                                 let freqFraction = Float(i) / Float(max(1, count - 1))
                                 let schemeColor = appState.waveformColorScheme.color(for: freqFraction)
 
-                                // Draw Left Channel (Top half, growing upwards from center divider)
                                 let lVal = CGFloat(leftBands[i])
                                 let lBarH = max(1.0, lVal * maxBarH)
                                 let lY = half - lBarH
@@ -106,7 +76,6 @@ public struct StereoSpectrumView: View {
                                     leftCurve.addLine(to: CGPoint(x: centerX, y: lY))
                                 }
 
-                                // Draw Right Channel (Bottom half, growing downwards from center divider)
                                 let rVal = CGFloat(rightBands[i])
                                 let rBarH = max(1.0, rVal * maxBarH)
                                 let rY = half + 1
@@ -124,50 +93,58 @@ public struct StereoSpectrumView: View {
                                 }
                             }
 
-                            // Stroke smooth accent curves across band boundaries
                             context.stroke(leftCurve, with: .color(appState.waveformColorScheme.color(for: 0.8).opacity(0.8)), lineWidth: 1.0)
                             context.stroke(rightCurve, with: .color(appState.waveformColorScheme.color(for: 0.3).opacity(0.8)), lineWidth: 1.0)
                         }
                     }
-
-                    // Full-width interactive seekbar track at the bottom
-                    VStack {
-                        Spacer()
-                        let seekW = max(1.0, w)
-                        let progress = (audioEngine.duration > 0) ? (audioEngine.currentTime / audioEngine.duration) : 0.0
-                        let currentX = CGFloat(progress) * seekW
-
-                        ZStack(alignment: .leading) {
-                            // Subtle background track
-                            Capsule()
-                                .fill(Color.white.opacity(0.12))
-                                .frame(height: 4)
-
-                            // Orange elapsed progress fill
-                            Capsule()
-                                .fill(Color(red: 1.0, green: 0.38, blue: 0.08))
-                                .frame(width: max(2, min(currentX, seekW)), height: 4)
-
-                            // Playhead indicator thumb
-                            Circle()
-                                .fill(Color.white)
-                                .frame(width: 8, height: 8)
-                                .shadow(color: Color(red: 1.0, green: 0.38, blue: 0.08).opacity(0.8), radius: 3)
-                                .position(x: min(max(4, currentX), seekW - 4), y: 6)
-                        }
-                        .frame(height: 12)
-                    }
-                    .frame(height: 26)
-                    .contentShape(Rectangle())
-                    .gesture(
-                        DragGesture(minimumDistance: 0)
-                            .onChanged { val in
-                                guard audioEngine.duration > 0, w > 0 else { return }
-                                let fraction = min(max(0.0, val.location.x / w), 1.0)
-                                audioEngine.seek(to: fraction * audioEngine.duration)
-                            }
-                    )
+                    .allowsHitTesting(false)
                 }
+
+                // Isolated Channel Labels & Real-time VU Meters (zero-allocation level polling)
+                StereoLevelMetersOverlay(isPlaying: audioEngine.playbackState == .playing)
+                    .allowsHitTesting(false)
+
+                // Full-width isolated 120 FPS interactive seekbar track at the bottom
+                VStack {
+                    Spacer()
+                    SpectrumSeekbarView(audioEngine: audioEngine, width: w)
+                }
+                .frame(maxHeight: .infinity, alignment: .bottom)
+            }
+        }
+    }
+}
+
+private struct StereoLevelMetersOverlay: View {
+    let isPlaying: Bool
+
+    var body: some View {
+        TimelineView(.animation(paused: !isPlaying)) { _ in
+            let levels = AudioAnalyzer.shared.getCurrentLevels()
+            VStack {
+                HStack {
+                    Text("LEFT CHANNEL (128-BAND FFT)")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.35))
+                    Spacer()
+                    LevelMeterBar(peak: levels.leftPeak, rms: levels.leftRMS)
+                        .frame(width: 84, height: 6)
+                }
+                .padding(.horizontal, 8)
+                .padding(.top, 4)
+
+                Spacer()
+
+                HStack {
+                    Text("RIGHT CHANNEL (128-BAND FFT)")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .foregroundColor(.white.opacity(0.35))
+                    Spacer()
+                    LevelMeterBar(peak: levels.rightPeak, rms: levels.rightRMS)
+                        .frame(width: 84, height: 6)
+                }
+                .padding(.horizontal, 8)
+                .padding(.bottom, 26)
             }
         }
     }
@@ -183,17 +160,14 @@ public struct LevelMeterBar: View {
             let h = geo.size.height
 
             ZStack(alignment: .leading) {
-                // Background track
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(Color.white.opacity(0.08))
 
-                // RMS bar
                 let rmsW = min(w, CGFloat(rms) * w * 2.0)
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(Color.green.opacity(0.7))
                     .frame(width: rmsW)
 
-                // Peak line
                 let peakX = min(w - 2, CGFloat(peak) * w * 2.0)
                 if peak > 0.01 {
                     Rectangle()

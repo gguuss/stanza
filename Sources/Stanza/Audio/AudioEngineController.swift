@@ -1,6 +1,15 @@
 import Foundation
 import Accelerate
+import AudioToolbox
 @preconcurrency import AVFoundation
+
+private let audioEngineRenderNotifyCallback: AURenderCallback = { inRefCon, ioActionFlags, _, _, inNumberFrames, ioData in
+    if ioActionFlags.pointee.contains(.unitRenderAction_PostRender), let bufferList = ioData {
+        let analyzer = Unmanaged<AudioAnalyzer>.fromOpaque(inRefCon).takeUnretainedValue()
+        analyzer.ingestAudioBufferList(bufferList, frameCount: Int(inNumberFrames))
+    }
+    return noErr
+}
 
 public enum PlaybackState: Equatable, Sendable {
     case stopped
@@ -66,6 +75,7 @@ public final class AudioEngineController: ObservableObject {
 
     private var timer: Timer?
     private var isSeeking: Bool = false
+    private var hasRenderNotify: Bool = false
 
     public init() {
         if UserDefaults.standard.object(forKey: Self.userDefaultsVolumeKey) != nil {
@@ -82,12 +92,25 @@ public final class AudioEngineController: ObservableObject {
         let mainMixer = engine.mainMixerNode
         engine.connect(playerNode, to: mainMixer, format: nil)
 
-        // Install real-time tap on mainMixer for FFT / spectral visualizer
         let tapFormat = mainMixer.outputFormat(forBus: 0)
-        let bufferSize: AVAudioFrameCount = 1024
+        let hwRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
+        AudioAnalyzer.shared.setOutputSampleRate(Float(hwRate > 0 ? hwRate : tapFormat.sampleRate))
 
-        mainMixer.installTap(onBus: 0, bufferSize: bufferSize, format: tapFormat) { buffer, _ in
-            AudioAnalyzer.shared.processBuffer(buffer)
+        // Prefer CoreAudio AudioUnit render notify on outputNode (~86-172 Hz per IO quantum) over
+        // AVAudioNode.installTap, which macOS throttles to ~10 Hz (~100 ms chunks).
+        if let audioUnit = engine.outputNode.audioUnit {
+            let context = Unmanaged.passUnretained(AudioAnalyzer.shared).toOpaque()
+            let status = AudioUnitAddRenderNotify(audioUnit, audioEngineRenderNotifyCallback, context)
+            if status == noErr {
+                hasRenderNotify = true
+            }
+        }
+
+        if !hasRenderNotify {
+            let bufferSize: AVAudioFrameCount = 512
+            mainMixer.installTap(onBus: 0, bufferSize: bufferSize, format: tapFormat) { buffer, _ in
+                AudioAnalyzer.shared.processBuffer(buffer)
+            }
         }
 
         do {
@@ -132,6 +155,7 @@ public final class AudioEngineController: ObservableObject {
             // Reconnect playerNode to mixer with the file's processingFormat
             engine.disconnectNodeOutput(playerNode)
             engine.connect(playerNode, to: engine.mainMixerNode, format: audioFile.processingFormat)
+            AudioAnalyzer.shared.setOutputSampleRate(Float(engine.mainMixerNode.outputFormat(forBus: 0).sampleRate))
 
             if !engine.isRunning {
                 try engine.start()
@@ -479,6 +503,25 @@ public final class AudioEngineController: ObservableObject {
         timer = nil
     }
 
+    /// High-precision live playhead position for 120 FPS visualizers without triggering
+    /// ObservableObject SwiftUI invalidations on every frame.
+    public var interpolatedCurrentTime: TimeInterval {
+        guard playbackState == .playing,
+              let nodeTime = playerNode.lastRenderTime,
+              let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
+              playerTime.sampleRate > 0 else {
+            return currentTime
+        }
+        let elapsedSeconds = Double(playerTime.sampleTime) / playerTime.sampleRate
+        if isReversed {
+            let computedFileTime = Double(seekFrameOffset) / sampleRate + elapsedSeconds
+            return max(0, min(duration, duration - computedFileTime))
+        } else {
+            let computedTime = Double(seekFrameOffset) / sampleRate + elapsedSeconds
+            return max(0, min(duration, computedTime))
+        }
+    }
+
     private func updateCurrentTime() {
         guard playbackState == .playing,
               let nodeTime = playerNode.lastRenderTime,
@@ -503,7 +546,12 @@ public final class AudioEngineController: ObservableObject {
                 handlePlaybackFinished()
                 return
             }
-            currentTime = max(0, min(duration, realTime))
+            let clamped = max(0, min(duration, realTime))
+            // Throttle @Published broadcasts to ~20 Hz (0.05s) for text readouts;
+            // visual playheads read interpolatedCurrentTime at native 120 Hz.
+            if abs(clamped - currentTime) >= 0.05 {
+                currentTime = clamped
+            }
         } else {
             let computedTime = Double(seekFrameOffset) / sampleRate + elapsedSeconds
 
@@ -515,8 +563,12 @@ public final class AudioEngineController: ObservableObject {
                 }
             } else if computedTime >= duration && duration > 0 {
                 currentTime = duration
+                return
             }
-            currentTime = max(0, min(duration, computedTime))
+            let clamped = max(0, min(duration, computedTime))
+            if abs(clamped - currentTime) >= 0.05 {
+                currentTime = clamped
+            }
         }
     }
 }

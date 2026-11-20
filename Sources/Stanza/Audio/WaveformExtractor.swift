@@ -12,7 +12,8 @@ public struct ChannelPeaks: Sendable {
     }
 }
 
-public struct WaveformData: Sendable {
+public struct WaveformData: Sendable, Equatable {
+    public let id: UUID
     public let samplePoints: Int
     public let left: ChannelPeaks
     public let right: ChannelPeaks
@@ -20,17 +21,23 @@ public struct WaveformData: Sendable {
     public let duration: TimeInterval
 
     public init(
+        id: UUID = UUID(),
         samplePoints: Int,
         left: ChannelPeaks,
         right: ChannelPeaks,
         frequencies: [Float] = [],
         duration: TimeInterval
     ) {
+        self.id = id
         self.samplePoints = samplePoints
         self.left = left
         self.right = right
         self.frequencies = frequencies.isEmpty ? [Float](repeating: 0.5, count: samplePoints) : frequencies
         self.duration = duration
+    }
+
+    public static func == (lhs: WaveformData, rhs: WaveformData) -> Bool {
+        lhs.id == rhs.id && lhs.samplePoints == rhs.samplePoints
     }
 
     public static let empty = WaveformData(

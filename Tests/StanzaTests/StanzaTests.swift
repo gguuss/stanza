@@ -1251,6 +1251,72 @@ final class StanzaTests: XCTestCase {
         let stereoView = StereoSpectrumView(audioEngine: engine, appState: appState)
         XCTAssertNotNil(stereoView)
     }
+
+    func testAudioAnalyzerRealTimeRingBufferAndDisplaySampling() {
+        let analyzer = AudioAnalyzer(fftSize: 1024)
+        analyzer.setOutputSampleRate(44100.0)
+
+        let frameCount = 512
+        var leftSamples = [Float](repeating: 0, count: frameCount)
+        var rightSamples = [Float](repeating: 0, count: frameCount)
+
+        // Generate 1 kHz sine on Left and 4 kHz sine on Right across 3 render quanta (1536 frames)
+        for q in 0..<3 {
+            for i in 0..<frameCount {
+                let sampleIdx = q * frameCount + i
+                let t = Double(sampleIdx) / 44100.0
+                leftSamples[i] = Float(sin(2.0 * .pi * 1000.0 * t) * 0.8)
+                rightSamples[i] = Float(sin(2.0 * .pi * 4000.0 * t) * 0.8)
+            }
+
+            leftSamples.withUnsafeMutableBufferPointer { lBuf in
+                rightSamples.withUnsafeMutableBufferPointer { rBuf in
+                    let ablPtr = AudioBufferList.allocate(maximumBuffers: 2)
+                    defer { free(ablPtr.unsafeMutablePointer) }
+                    ablPtr[0] = AudioBuffer(
+                        mNumberChannels: 1,
+                        mDataByteSize: UInt32(frameCount * MemoryLayout<Float>.size),
+                        mData: lBuf.baseAddress
+                    )
+                    ablPtr[1] = AudioBuffer(
+                        mNumberChannels: 1,
+                        mDataByteSize: UInt32(frameCount * MemoryLayout<Float>.size),
+                        mData: rBuf.baseAddress
+                    )
+                    analyzer.ingestAudioBufferList(ablPtr.unsafePointer, frameCount: frameCount)
+                }
+            }
+        }
+
+        // Sample at 120 FPS using preallocated buffers (zero allocations)
+        var spectrum = [Float](repeating: 0, count: analyzer.bandCount)
+        var peaks = [Float](repeating: 0, count: analyzer.bandCount)
+        var left = [Float](repeating: 0, count: analyzer.bandCount)
+        var right = [Float](repeating: 0, count: analyzer.bandCount)
+
+        let t0 = ProcessInfo.processInfo.systemUptime
+        for frame in 0..<5 {
+            analyzer.sampleForDisplay(
+                timestamp: t0 + Double(frame) * (1.0 / 120.0),
+                spectrum: &spectrum,
+                peaks: &peaks,
+                left: &left,
+                right: &right
+            )
+        }
+
+        // Verify left (1 kHz) peak band index is lower than right (4 kHz) peak band index
+        let leftPeakBand = left.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+        let rightPeakBand = right.enumerated().max(by: { $0.element < $1.element })?.offset ?? 0
+        XCTAssertGreaterThan(left[leftPeakBand], 0.3)
+        XCTAssertGreaterThan(right[rightPeakBand], 0.3)
+        XCTAssertGreaterThan(rightPeakBand, leftPeakBand)
+
+        // Verify zero-allocation stereo levels
+        let levels = analyzer.getCurrentLevels()
+        XCTAssertGreaterThan(levels.leftPeak, 0.5)
+        XCTAssertGreaterThan(levels.rightPeak, 0.5)
+    }
 }
 
 
