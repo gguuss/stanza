@@ -4,7 +4,7 @@ set -e
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
-VERSION="1.5.2"
+VERSION="1.5.3"
 DMG_NAME="Stanza-${VERSION}.dmg"
 OUTPUT_DMG="$DIR/build/$DMG_NAME"
 STAGING_DIR="$DIR/build/dmg_staging"
@@ -13,9 +13,13 @@ STAGING_DIR="$DIR/build/dmg_staging"
 echo "==> Building Stanza application bundle..."
 ./Scripts/bundle_app.sh
 
-# 2. Generate DMG background graphic
-echo "==> Generating DMG background..."
-python3 Scripts/generate_dmg_background.py
+# 2. Generate DMG background graphic if missing
+if [ ! -f "$DIR/Scripts/dmg_background.png" ]; then
+    echo "==> Generating DMG background..."
+    python3 Scripts/generate_dmg_background.py
+else
+    echo "==> Using existing DMG background at Scripts/dmg_background.png..."
+fi
 
 # 3. Setup staging folder
 echo "==> Preparing staging directory..."
